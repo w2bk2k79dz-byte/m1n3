@@ -95,7 +95,7 @@ def main(args, net, datadir_path, merged_urls, worker_endpoint):
         if args.testnet: # establish p2p connection first if testnet so bitcoind can work without connections
             factory = yield connect_p2p()
         
-        # connect to bitcoind over JSON-RPC and do initial getmemorypool
+        # connect to bitcoind over JSON-RPC and do initial getblocktemplate
         url = '%s://%s:%i/' % ('https' if args.bitcoind_rpc_ssl else 'http', args.bitcoind_address, args.bitcoind_rpc_port)
         print '''Testing bitcoind RPC connection to '%s' with username '%s'...''' % (url, args.bitcoind_rpc_username)
         bitcoind = jsonrpc.HTTPProxy(url, dict(Authorization='Basic ' + base64.b64encode(args.bitcoind_rpc_username + ':' + args.bitcoind_rpc_password)), timeout=30)
@@ -137,7 +137,8 @@ def main(args, net, datadir_path, merged_urls, worker_endpoint):
             
             if address is None:
                 print '    Getting payout address from bitcoind...'
-                address = yield deferral.retry('Error getting payout address from bitcoind:', 5)(lambda: bitcoind.rpc_getaccountaddress('p2pool'))()
+                # Use getnewaddress with label (getaccountaddress was removed in Bitcoin Core 0.18)
+                address = yield deferral.retry('Error getting payout address from bitcoind:', 5)(lambda: bitcoind.rpc_getnewaddress('p2pool', 'legacy'))()
             
             with open(address_path, 'wb') as f:
                 f.write(address)

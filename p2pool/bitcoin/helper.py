@@ -36,25 +36,13 @@ def check(bitcoind, net):
 
 @deferral.retry('Error getting work from bitcoind:', 3)
 @defer.inlineCallbacks
-def getwork(bitcoind, use_getblocktemplate=False):
-    def go():
-        if use_getblocktemplate:
-            return bitcoind.rpc_getblocktemplate(dict(mode='template', rules=['segwit']))
-        else:
-            return bitcoind.rpc_getmemorypool()
-    try:
-        start = time.time()
-        work = yield go()
-        end = time.time()
-    except jsonrpc.Error_for_code(-32601): # Method not found
-        use_getblocktemplate = not use_getblocktemplate
-        try:
-            start = time.time()
-            work = yield go()
-            end = time.time()
-        except jsonrpc.Error_for_code(-32601): # Method not found
-            print >>sys.stderr, 'Error: Bitcoin version too old! Upgrade to v0.5 or newer!'
-            raise deferral.RetrySilentlyException()
+def getwork(bitcoind, use_getblocktemplate=True):
+    # Always use getblocktemplate (required for Bitcoin Core 0.21.0+)
+    # getmemorypool was deprecated in 0.7.0 and removed long ago
+    start = time.time()
+    work = yield bitcoind.rpc_getblocktemplate(dict(mode='template', rules=['segwit', 'taproot']))
+    end = time.time()
+    use_getblocktemplate = True
     packed_transactions = [x['data'].decode('hex') for x in work['transactions'] if len(x.get('depends', [])) == 0]
     if 'height' not in work:
         work['height'] = (yield bitcoind.rpc_getblock(work['previousblockhash']))['height'] + 1
@@ -87,17 +75,15 @@ def submit_block_p2p(block, factory, net):
 @deferral.retry('Error submitting block: (will retry)', 10, 10)
 @defer.inlineCallbacks
 def submit_block_rpc(block, ignore_failure, bitcoind, bitcoind_work, net):
+    # Check if SegWit is activated to determine block encoding
     segwit_rules = set(['!segwit', 'segwit'])
     segwit_activated = len(segwit_rules - set(bitcoind_work.value['rules'])) < len(segwit_rules)
-    if bitcoind_work.value['use_getblocktemplate']:
-        try:
-            result = yield bitcoind.rpc_submitblock((bitcoin_data.block_type if segwit_activated else bitcoin_data.stripped_block_type).pack(block).encode('hex'))
-        except jsonrpc.Error_for_code(-32601): # Method not found, for older litecoin versions
-            result = yield bitcoind.rpc_getblocktemplate(dict(mode='submit', data=bitcoin_data.block_type.pack(block).encode('hex')))
-        success = result is None
-    else:
-        result = yield bitcoind.rpc_getmemorypool(bitcoin_data.block_type.pack(block).encode('hex'))
-        success = result
+    # Always use submitblock (getmemorypool was deprecated in Bitcoin Core 0.7.0)
+    try:
+        result = yield bitcoind.rpc_submitblock((bitcoin_data.block_type if segwit_activated else bitcoin_data.stripped_block_type).pack(block).encode('hex'))
+    except jsonrpc.Error_for_code(-32601): # Method not found, for older altcoin versions
+        result = yield bitcoind.rpc_getblocktemplate(dict(mode='submit', data=bitcoin_data.block_type.pack(block).encode('hex')))
+    success = result is None
     success_expected = net.PARENT.POW_FUNC(bitcoin_data.block_header_type.pack(block['header'])) <= block['header']['bits'].target
     if (not success and success_expected and not ignore_failure) or (success and not success_expected):
         print >>sys.stderr, 'Block submittal result: %s (%r) Expected: %s' % (success, result, success_expected)
