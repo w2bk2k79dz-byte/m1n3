@@ -1,0 +1,7 @@
+# P2Pool Dependencies
+Twisted>=13.2.0
+argparse
+pyOpenSSL
+
+# Sui Integration
+pysui>=0.50.0

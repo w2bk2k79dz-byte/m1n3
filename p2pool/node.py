@@ -147,7 +147,25 @@ class P2PNode(p2p.Node):
         def _(share):
             if not (share.pow_hash <= share.header['bits'].target):
                 return
-            
+
+            # Mint share on Sui if enabled
+            @defer.inlineCallbacks
+            def mint_on_sui():
+                from p2pool import sui_client
+                sui_registry = sui_client.get_sui_registry()
+                if sui_registry and sui_registry.enabled:
+                    try:
+                        # Check if this share found a block
+                        is_block_winner = share.pow_hash <= share.header['bits'].target and \
+                                          share.pow_hash <= self.node.bitcoind_work.value['bits'].target
+                        yield sui_registry.mint_share(share, share.header, is_block_winner)
+                        if is_block_winner:
+                            print '>>> Block winner share minted on Sui! Share hash:', p2pool_data.format_hash(share.hash)
+                    except:
+                        log.err(None, 'Error minting share on Sui:')
+
+            mint_on_sui()
+
             def spread():
                 if (self.node.get_height_rel_highest(share.header['previous_block']) > -5 or
                     self.node.bitcoind_work.value['previous_block'] in [share.header['previous_block'], share.header_hash]):
@@ -186,7 +204,17 @@ class Node(object):
             while stop_signal.times == 0:
                 flag = self.factory.new_block.get_deferred()
                 try:
-                    self.bitcoind_work.set((yield helper.getwork(self.bitcoind, self.bitcoind_work.value['use_getblocktemplate'])))
+                    new_work = yield helper.getwork(self.bitcoind, self.bitcoind_work.value['use_getblocktemplate'])
+                    self.bitcoind_work.set(new_work)
+
+                    # Register block template on Sui if enabled
+                    from p2pool import sui_client
+                    sui_registry = sui_client.get_sui_registry()
+                    if sui_registry and sui_registry.enabled:
+                        try:
+                            yield sui_registry.register_block_template(new_work)
+                        except:
+                            log.err(None, 'Error registering block template on Sui:')
                 except:
                     log.err()
                 yield defer.DeferredList([flag, deferral.sleep(15)], fireOnOneCallback=True)

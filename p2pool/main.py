@@ -113,7 +113,32 @@ def main(args, net, datadir_path, merged_urls, worker_endpoint):
         print '    Current block hash: %x' % (temp_work['previous_block'],)
         print '    Current block height: %i' % (temp_work['height'] - 1,)
         print
-        
+
+        # Initialize Sui blockchain integration if enabled
+        if args.sui_enable:
+            print 'Initializing Sui blockchain integration...'
+            from p2pool import sui_client
+            sui_registry = sui_client.init_sui_registry(
+                config_path=args.sui_config_path,
+                package_id=args.sui_package_id,
+                registry_id=args.sui_registry_id,
+                private_key=args.sui_private_key
+            )
+            if sui_registry.enabled:
+                print '    ...success! Shares will be registered on Sui blockchain.'
+                print '    Package ID:', args.sui_package_id
+                print '    Registry ID:', args.sui_registry_id
+                if args.sui_register_templates:
+                    print '    Block templates: ENABLED'
+                if args.sui_mint_shares:
+                    print '    Share minting: ENABLED'
+            else:
+                print '    ...failed! Sui integration disabled.'
+            print
+        else:
+            from p2pool import sui_client
+            sui_client.init_sui_registry()  # Initialize with disabled state
+
         if not args.testnet:
             factory = yield connect_p2p()
         
@@ -538,7 +563,30 @@ def run():
     bitcoind_group.add_argument(metavar='BITCOIND_RPCUSERPASS',
         help='bitcoind RPC interface username, then password, space-separated (only one being provided will cause the username to default to being empty, and none will cause P2Pool to read them from bitcoin.conf)',
         type=str, action='store', default=[], nargs='*', dest='bitcoind_rpc_userpass')
-    
+
+    sui_group = parser.add_argument_group('Sui blockchain integration')
+    sui_group.add_argument('--sui-enable',
+        help='enable Sui blockchain integration for on-chain share registration and trading',
+        action='store_true', default=False, dest='sui_enable')
+    sui_group.add_argument('--sui-config-path', metavar='SUI_CONFIG_PATH',
+        help='path to Sui client config file (default: ~/.sui/sui_config/client.yaml)',
+        type=str, action='store', default=None, dest='sui_config_path')
+    sui_group.add_argument('--sui-package-id', metavar='PACKAGE_ID',
+        help='deployed Sui package ID for p2pool_shares module (required for Sui integration)',
+        type=str, action='store', default=None, dest='sui_package_id')
+    sui_group.add_argument('--sui-registry-id', metavar='REGISTRY_ID',
+        help='Sui ShareRegistry shared object ID (required for Sui integration)',
+        type=str, action='store', default=None, dest='sui_registry_id')
+    sui_group.add_argument('--sui-private-key', metavar='PRIVATE_KEY',
+        help='Sui private key for signing transactions (hex format)',
+        type=str, action='store', default=None, dest='sui_private_key')
+    sui_group.add_argument('--sui-register-templates',
+        help='register block templates on Sui (default: enabled if Sui is enabled)',
+        action='store_true', default=True, dest='sui_register_templates')
+    sui_group.add_argument('--sui-mint-shares',
+        help='mint shares as tradeable NFTs on Sui (default: enabled if Sui is enabled)',
+        action='store_true', default=True, dest='sui_mint_shares')
+
     args = parser.parse_args()
     
     if args.debug:

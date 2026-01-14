@@ -468,8 +468,47 @@ def get_web_root(wb, datadir_path, bitcoind_getinfo_var, stop_event=variable.Eve
         hd.datastreams['getwork_latency'].add_datum(time.time(), new_work['latency'])
     new_root.putChild('graph_data', WebInterface(lambda source, view: hd.datastreams[source].dataviews[view].get_data(time.time())))
     
+    # Sui blockchain integration endpoints
+    @defer.inlineCallbacks
+    def get_sui_stats():
+        from p2pool import sui_client
+        sui_registry = sui_client.get_sui_registry()
+        if not sui_registry or not sui_registry.enabled:
+            defer.returnValue({
+                'enabled': False,
+                'total_shares': 0,
+                'total_templates': 0,
+                'total_block_winners': 0,
+                'package_id': None,
+                'recent_shares': []
+            })
+
+        try:
+            total_shares, total_templates, total_winners = yield sui_registry.get_registry_stats()
+            defer.returnValue({
+                'enabled': True,
+                'total_shares': total_shares,
+                'total_templates': total_templates,
+                'total_block_winners': total_winners,
+                'package_id': sui_registry.package_id,
+                'registry_id': sui_registry.registry_id,
+                'recent_shares': []  # Could be enhanced to query recent shares from Sui
+            })
+        except:
+            defer.returnValue({
+                'enabled': True,
+                'error': 'Failed to fetch Sui stats',
+                'total_shares': 0,
+                'total_templates': 0,
+                'total_block_winners': 0,
+                'package_id': sui_registry.package_id if sui_registry else None,
+                'recent_shares': []
+            })
+
+    web_root.putChild('sui_stats', WebInterface(get_sui_stats))
+
     if static_dir is None:
         static_dir = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), 'web-static')
     web_root.putChild('static', static.File(static_dir))
-    
+
     return web_root
