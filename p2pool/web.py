@@ -507,6 +507,47 @@ def get_web_root(wb, datadir_path, bitcoind_getinfo_var, stop_event=variable.Eve
 
     web_root.putChild('sui_stats', WebInterface(get_sui_stats))
 
+    # M1N3 verification endpoints
+    @defer.inlineCallbacks
+    def get_m1n3_stats():
+        from p2pool import m1n3_client
+        m1n3 = m1n3_client.get_m1n3_client()
+        if not m1n3 or not m1n3.enabled:
+            defer.returnValue({
+                'enabled': False,
+                'total_minted': 0,
+                'total_blocks': 0,
+                'active_nodes': 0,
+                'your_rewards': 0,
+                'active_sessions': []
+            })
+
+        try:
+            # TODO: Query actual stats from Sui
+            defer.returnValue({
+                'enabled': True,
+                'total_minted': 0,  # From treasury
+                'total_blocks': len(m1n3.registered_sessions),
+                'active_nodes': 0,  # From registry
+                'your_rewards': 0,  # From user's balance
+                'active_sessions': [],  # From registry
+                'package_id': m1n3.package_id,
+                'registry_id': m1n3.registry_id,
+                'treasury_id': m1n3.treasury_id,
+            })
+        except:
+            defer.returnValue({
+                'enabled': True,
+                'error': 'Failed to fetch M1N3 stats',
+                'total_minted': 0,
+                'total_blocks': 0,
+                'active_nodes': 0,
+                'your_rewards': 0,
+                'active_sessions': []
+            })
+
+    web_root.putChild('m1n3_stats', WebInterface(get_m1n3_stats))
+
     if static_dir is None:
         static_dir = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), 'web-static')
     web_root.putChild('static', static.File(static_dir))

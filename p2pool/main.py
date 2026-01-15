@@ -139,6 +139,32 @@ def main(args, net, datadir_path, merged_urls, worker_endpoint):
             from p2pool import sui_client
             sui_client.init_sui_registry()  # Initialize with disabled state
 
+        # Initialize M1N3 verification if enabled
+        if args.m1n3_enable:
+            print 'Initializing M1N3 decentralized Bitcoin verification...'
+            from p2pool import m1n3_client
+            m1n3 = m1n3_client.init_m1n3_client(
+                config_path=args.sui_config_path,  # Reuse Sui config
+                package_id=args.m1n3_package_id,
+                registry_id=args.m1n3_registry_id,
+                treasury_id=args.m1n3_treasury_id,
+                start_height=args.m1n3_start_height,
+                end_height=args.m1n3_end_height
+            )
+            if m1n3.enabled:
+                print '    ...success! M1N3 verification enabled.'
+                print '    Block range:', args.m1n3_start_height, '-', args.m1n3_end_height if args.m1n3_end_height else 'continuous'
+                print '    Auto-verify:', 'ENABLED' if args.m1n3_auto_verify else 'DISABLED'
+                # Start verification loop if auto-verify enabled
+                if args.m1n3_auto_verify:
+                    m1n3.run_verification_loop(bitcoind)
+            else:
+                print '    ...failed! M1N3 integration disabled.'
+            print
+        else:
+            from p2pool import m1n3_client
+            m1n3_client.init_m1n3_client()  # Initialize with disabled state
+
         if not args.testnet:
             factory = yield connect_p2p()
         
@@ -586,6 +612,29 @@ def run():
     sui_group.add_argument('--sui-mint-shares',
         help='mint shares as tradeable NFTs on Sui (default: enabled if Sui is enabled)',
         action='store_true', default=True, dest='sui_mint_shares')
+
+    m1n3_group = parser.add_argument_group('M1N3 - Decentralized Bitcoin verification')
+    m1n3_group.add_argument('--m1n3-enable',
+        help='enable M1N3 decentralized Bitcoin block verification',
+        action='store_true', default=False, dest='m1n3_enable')
+    m1n3_group.add_argument('--m1n3-package-id', metavar='PACKAGE_ID',
+        help='deployed M1N3 package ID (required for M1N3)',
+        type=str, action='store', default=None, dest='m1n3_package_id')
+    m1n3_group.add_argument('--m1n3-registry-id', metavar='REGISTRY_ID',
+        help='M1N3 BlockRegistry shared object ID (required for M1N3)',
+        type=str, action='store', default=None, dest='m1n3_registry_id')
+    m1n3_group.add_argument('--m1n3-treasury-id', metavar='TREASURY_ID',
+        help='M1N3 Treasury shared object ID (required for M1N3)',
+        type=str, action='store', default=None, dest='m1n3_treasury_id')
+    m1n3_group.add_argument('--m1n3-start-height', metavar='HEIGHT',
+        help='starting block height for M1N3 verification (default: 0 - genesis)',
+        type=int, action='store', default=0, dest='m1n3_start_height')
+    m1n3_group.add_argument('--m1n3-end-height', metavar='HEIGHT',
+        help='ending block height for M1N3 verification (default: None - continuous)',
+        type=int, action='store', default=None, dest='m1n3_end_height')
+    m1n3_group.add_argument('--m1n3-auto-verify',
+        help='automatically register and verify blocks (default: false)',
+        action='store_true', default=False, dest='m1n3_auto_verify')
 
     args = parser.parse_args()
     

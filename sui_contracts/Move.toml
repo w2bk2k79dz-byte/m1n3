@@ -1,6 +1,6 @@
 [package]
 name = "p2pool_shares"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2024.beta"
 
 [dependencies]
@@ -8,3 +8,5 @@ Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-fram
 
 [addresses]
 p2pool_shares = "0x0"
+
+# M1N3 - Decentralized trustless Bitcoin mining verification

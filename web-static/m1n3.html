@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>M1N3 - Decentralized Bitcoin Verification</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            font-size: 48px;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        .header .tagline {
+            font-size: 18px;
+            opacity: 0.9;
+        }
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: transform 0.2s;
+        }
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+        .stat-label {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .stat-value {
+            font-size: 36px;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+        .stat-subtext {
+            font-size: 12px;
+            color: #999;
+        }
+        .content-section {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .section-title {
+            font-size: 24px;
+            color: #333;
+            margin-bottom: 20px;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 10px;
+        }
+        .verification-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .verification-table th {
+            background: #667eea;
+            color: white;
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+        }
+        .verification-table td {
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+        }
+        .verification-table tr:hover {
+            background: #f8f9fa;
+        }
+        .status-badge {
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status-active {
+            background: #4caf50;
+            color: white;
+        }
+        .status-completed {
+            background: #2196f3;
+            color: white;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #eee;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            transition: width 0.3s;
+        }
+        .field-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .field-box {
+            padding: 12px;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 12px;
+        }
+        .field-pending {
+            background: #ffe082;
+            color: #333;
+        }
+        .field-verified {
+            background: #81c784;
+            color: white;
+        }
+        .field-disabled {
+            background: #e0e0e0;
+            color: #999;
+        }
+        .reward-highlight {
+            background: #fff9c4;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #ffc107;
+            margin: 15px 0;
+        }
+        .info-box {
+            background: #e3f2fd;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #2196f3;
+            margin: 15px 0;
+        }
+        .button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+        .button:hover {
+            background: #764ba2;
+        }
+        .refresh-button {
+            float: right;
+            margin-top: -50px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⛏️ M1N3</h1>
+            <div class="tagline">Decentralized Trustless Bitcoin Mining Verification</div>
+        </div>
+
+        <div class="dashboard">
+            <div class="stat-card">
+                <div class="stat-label">Total M1N3 Minted</div>
+                <div class="stat-value" id="totalMinted">-</div>
+                <div class="stat-subtext">Tokens distributed as rewards</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Blocks Registered</div>
+                <div class="stat-value" id="blocksRegistered">-</div>
+                <div class="stat-subtext">Bitcoin blocks on Sui</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Active Nodes</div>
+                <div class="stat-value" id="activeNodes">-</div>
+                <div class="stat-subtext">Verification participants</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Your Rewards</div>
+                <div class="stat-value" id="yourRewards">-</div>
+                <div class="stat-subtext">M1N3 tokens earned</div>
+            </div>
+        </div>
+
+        <div class="content-section">
+            <h2 class="section-title">How M1N3 Works</h2>
+            <button class="button refresh-button" onclick="loadData()">Refresh Data</button>
+
+            <div class="info-box">
+                <h3 style="margin-bottom: 10px;">🎯 Verification Process</h3>
+                <p><strong>1.</strong> Bitcoin block headers are registered on Sui blockchain as source of truth</p>
+                <p><strong>2.</strong> Full nodes coordinate to divide block fields for verification</p>
+                <p><strong>3.</strong> Dynamic granularity adjusts based on participating nodes (byte or bit level)</p>
+                <p><strong>4.</strong> Nodes submit field data which is verified on-chain using SHA-256</p>
+                <p><strong>5.</strong> Successful verifications earn M1N3 tokens (subsidy × 1000)</p>
+            </div>
+
+            <div class="reward-highlight">
+                <h3 style="margin-bottom: 10px;">💰 Reward Structure</h3>
+                <p><strong>Total Reward:</strong> Original Block Subsidy × 1,000</p>
+                <p><strong>Block Verification:</strong> 50% (currently active)</p>
+                <p><strong>Merkle Root:</strong> 50% (disabled - reserved for future)</p>
+                <p><strong>Example:</strong> Genesis Block (50 BTC) = 50,000 M1N3 tokens (25,000 for block verification)</p>
+            </div>
+        </div>
+
+        <div class="content-section">
+            <h2 class="section-title">Active Verification Sessions</h2>
+
+            <table class="verification-table" id="sessionTable">
+                <thead>
+                    <tr>
+                        <th>Block Height</th>
+                        <th>Status</th>
+                        <th>Nodes</th>
+                        <th>Granularity</th>
+                        <th>Progress</th>
+                        <th>Reward Pool</th>
+                    </tr>
+                </thead>
+                <tbody id="sessionTableBody">
+                    <tr><td colspan="6" style="text-align: center; padding: 40px;">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="content-section">
+            <h2 class="section-title">Field Verification Example</h2>
+
+            <p style="margin-bottom: 15px;">Bitcoin Block Header Fields (5 active, merkle root disabled):</p>
+
+            <div class="field-grid">
+                <div class="field-box field-verified">
+                    <strong>Version</strong><br>
+                    4 bytes<br>
+                    ✓ Verified
+                </div>
+                <div class="field-box field-verified">
+                    <strong>Prev Hash</strong><br>
+                    32 bytes<br>
+                    ✓ Verified
+                </div>
+                <div class="field-box field-disabled">
+                    <strong>Merkle Root</strong><br>
+                    32 bytes<br>
+                    🔒 Disabled
+                </div>
+                <div class="field-box field-pending">
+                    <strong>Timestamp</strong><br>
+                    4 bytes<br>
+                    ⏳ Pending
+                </div>
+                <div class="field-box field-pending">
+                    <strong>Bits</strong><br>
+                    4 bytes<br>
+                    ⏳ Pending
+                </div>
+                <div class="field-box field-pending">
+                    <strong>Nonce</strong><br>
+                    4 bytes<br>
+                    ⏳ Pending
+                </div>
+            </div>
+
+            <div style="margin-top: 20px;">
+                <p><strong>Dynamic Granularity:</strong></p>
+                <p>• <strong>1-100 nodes:</strong> Fields divided by byte</p>
+                <p>• <strong>100+ nodes:</strong> Fields divided by bit (8× more granular)</p>
+                <p>• This ensures fair participation opportunities as network grows</p>
+            </div>
+        </div>
+
+        <div class="content-section">
+            <h2 class="section-title">Getting Started</h2>
+
+            <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 15px 0;">
+                <h3 style="margin-bottom: 10px;">Run M1N3 Node</h3>
+                <pre style="background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto;">python run_p2pool.py \
+    --m1n3-enable \
+    --m1n3-package-id 0xYOUR_PACKAGE_ID \
+    --m1n3-registry-id 0xYOUR_REGISTRY_ID \
+    --m1n3-treasury-id 0xYOUR_TREASURY_ID \
+    --m1n3-start-height 0 \
+    --m1n3-auto-verify</pre>
+            </div>
+
+            <p><strong>Benefits of Participating:</strong></p>
+            <ul style="margin-left: 20px; margin-top: 10px; line-height: 1.8;">
+                <li>Earn M1N3 tokens for verifying Bitcoin blockchain data</li>
+                <li>Contribute to decentralized Bitcoin verification infrastructure</li>
+                <li>No mining hardware required - just verify existing blocks</li>
+                <li>Rewards proportional to original Bitcoin block subsidies</li>
+            </ul>
+        </div>
+
+        <div style="text-align: center; color: white; margin-top: 30px; opacity: 0.8;">
+            <a href="/" style="color: white; text-decoration: none;">← Back to P2Pool</a> |
+            <a href="/static/sui_shares.html" style="color: white; text-decoration: none;">Sui Shares →</a>
+        </div>
+    </div>
+
+    <script>
+        function loadData() {
+            fetch('/m1n3_stats')
+                .then(response => response.json())
+                .then(data => {
+                    // Update dashboard stats
+                    document.getElementById('totalMinted').textContent = formatNumber(data.total_minted || 0);
+                    document.getElementById('blocksRegistered').textContent = formatNumber(data.total_blocks || 0);
+                    document.getElementById('activeNodes').textContent = formatNumber(data.active_nodes || 0);
+                    document.getElementById('yourRewards').textContent = formatNumber(data.your_rewards || 0);
+
+                    // Update sessions table
+                    const tbody = document.getElementById('sessionTableBody');
+                    if (data.active_sessions && data.active_sessions.length > 0) {
+                        tbody.innerHTML = data.active_sessions.map(session => {
+                            const progress = (session.verified_fields / 5) * 100;
+                            const statusClass = session.is_active ? 'status-active' : 'status-completed';
+                            const statusText = session.is_active ? 'Active' : 'Completed';
+                            const granularity = session.granularity == 0 ? 'Byte' : 'Bit';
+
+                            return `
+                                <tr>
+                                    <td><strong>${session.block_height}</strong></td>
+                                    <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+                                    <td>${session.node_count} nodes</td>
+                                    <td>${granularity} level</td>
+                                    <td>
+                                        <div class="progress-bar">
+                                            <div class="progress-fill" style="width: ${progress}%"></div>
+                                        </div>
+                                        ${session.verified_fields}/5 fields
+                                    </td>
+                                    <td>${formatNumber(session.total_reward)} M1N3</td>
+                                </tr>
+                            `;
+                        }).join('');
+                    } else {
+                        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #999;">No active sessions. Enable M1N3 to start verifying!</td></tr>';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading M1N3 data:', error);
+                    document.getElementById('sessionTableBody').innerHTML =
+                        '<tr><td colspan="6" style="text-align: center; color: red;">Error loading data. Is M1N3 enabled?</td></tr>';
+                });
+        }
+
+        function formatNumber(num) {
+            if (num >= 1000000) {
+                return (num / 1000000).toFixed(2) + 'M';
+            } else if (num >= 1000) {
+                return (num / 1000).toFixed(2) + 'K';
+            }
+            return num.toString();
+        }
+
+        // Load data on page load
+        loadData();
+
+        // Auto-refresh every 30 seconds
+        setInterval(loadData, 30000);
+    </script>
+</body>
+</html>
