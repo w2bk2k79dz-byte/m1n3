@@ -26,9 +26,11 @@ from p2pool.util import pack
 class M1N3Client(object):
     """
     M1N3 client for decentralized Bitcoin block verification
+    Supports Phase 1 (historical) and Phase 2 (real-time mining)
     """
     def __init__(self, config_path=None, package_id=None, registry_id=None,
-                 treasury_id=None, start_height=0, end_height=None):
+                 treasury_id=None, staking_registry_id=None, mining_registry_id=None,
+                 start_height=0, end_height=None, mining_mode=False, stake_amount=None):
         """
         Initialize M1N3 client
 
@@ -37,8 +39,12 @@ class M1N3Client(object):
             package_id: Deployed M1N3 package ID
             registry_id: BlockRegistry shared object ID
             treasury_id: M1N3Treasury shared object ID
+            staking_registry_id: StakingRegistry shared object ID
+            mining_registry_id: MiningRegistry shared object ID
             start_height: Starting block height to verify
             end_height: Ending block height (None = continuous)
+            mining_mode: Enable Phase 2 real-time mining
+            stake_amount: Amount to stake for template proposal
         """
         self.enabled = M1N3_AVAILABLE and package_id and registry_id and treasury_id
 
@@ -55,18 +61,34 @@ class M1N3Client(object):
             self.package_id = package_id
             self.registry_id = registry_id
             self.treasury_id = treasury_id
+            self.staking_registry_id = staking_registry_id
+            self.mining_registry_id = mining_registry_id
             self.start_height = start_height
             self.end_height = end_height
+            self.mining_mode = mining_mode
+            self.stake_amount = stake_amount
 
             # Track registered sessions
             self.registered_sessions = set()
             # Track submitted fields
             self.submitted_fields = {}  # {height: {field_id: True}}
 
-            print 'M1N3 verification client enabled:'
+            # Phase 2: Mining state
+            self.is_staked = False
+            self.stake_position_id = None
+            self.is_proposer = False
+            self.current_template_id = None
+
+            mode_str = 'PHASE 2 - Real-time Mining' if mining_mode else 'PHASE 1 - Historical Verification'
+            print 'M1N3 client enabled (%s):' % mode_str
             print '  Package ID:', self.package_id
             print '  Registry ID:', self.registry_id
             print '  Treasury ID:', self.treasury_id
+            if mining_mode:
+                print '  Staking Registry:', self.staking_registry_id
+                print '  Mining Registry:', self.mining_registry_id
+                if stake_amount:
+                    print '  Stake Amount:', stake_amount, 'M1N3'
             print '  Block range:', start_height, '-', end_height if end_height else 'continuous'
 
         except Exception as e:
@@ -405,4 +427,254 @@ def init_m1n3_client(config_path=None, package_id=None, registry_id=None,
 
 def get_m1n3_client():
     """Get the global M1N3 client"""
+    return _m1n3_client
+
+    # ==================== PHASE 2: REAL-TIME MINING ====================
+
+    @defer.inlineCallbacks
+    def stake_for_mining(self, m1n3_coin_id):
+        """
+        Stake M1N3 tokens to become template proposer
+
+        Args:
+            m1n3_coin_id: M1N3 coin object ID to stake
+
+        Returns:
+            True on success
+        """
+        if not self.enabled or not self.mining_mode:
+            defer.returnValue(False)
+
+        try:
+            result = yield threads.deferToThread(
+                self._stake_sync,
+                m1n3_coin_id
+            )
+
+            if result:
+                self.is_staked = True
+                self.is_proposer = True
+
+            defer.returnValue(result)
+
+        except Exception as e:
+            log.err(None, 'Error staking M1N3:')
+            defer.returnValue(False)
+
+    def _stake_sync(self, coin_id):
+        """Synchronous staking"""
+        try:
+            txn = SyncTransaction(client=self.client)
+
+            txn.move_call(
+                target=f"{self.package_id}::m1n3_staking::stake",
+                arguments=[
+                    self.staking_registry_id,
+                    coin_id,
+                    "0x6",  # Clock
+                ]
+            )
+
+            result = txn.execute(gas_budget="100000000")
+
+            if result.is_ok():
+                print 'Successfully staked M1N3! Now a template proposer.'
+                # TODO: Extract stake position ID from events
+                return True
+            else:
+                print >>sys.stderr, 'Staking failed:', result.result_string
+                return False
+
+        except Exception as e:
+            print >>sys.stderr, 'Staking error:', str(e)
+            return False
+
+    @defer.inlineCallbacks
+    def propose_template(self, bitcoind_work):
+        """
+        Propose block template for miners (only if staked)
+
+        Args:
+            bitcoind_work: Block template from bitcoind getblocktemplate
+
+        Returns:
+            Template ID on success
+        """
+        if not self.enabled or not self.mining_mode or not self.is_proposer:
+            defer.returnValue(None)
+
+        try:
+            result = yield threads.deferToThread(
+                self._propose_template_sync,
+                bitcoind_work
+            )
+
+            if result:
+                self.current_template_id = result
+
+            defer.returnValue(result)
+
+        except Exception as e:
+            log.err(None, 'Error proposing template:')
+            defer.returnValue(None)
+
+    def _propose_template_sync(self, work):
+        """Synchronous template proposal"""
+        try:
+            # Extract template data
+            height = work['height']
+            prev_block = pack.IntType(256).pack(work['previous_block'])
+            # Calculate merkle root from transactions
+            merkle_root = self._calculate_merkle_root(work['transactions'])
+            timestamp = work['time']
+            bits = work['bits'].target
+            coinbase_value = work['subsidy']
+
+            # Get transaction hashes
+            tx_hashes = [list(bytearray(bitcoin_data.hash256(
+                bitcoin_data.tx_type.pack(tx)
+            ))) for tx in work['transactions']]
+
+            txn = SyncTransaction(client=self.client)
+
+            txn.move_call(
+                target=f"{self.package_id}::m1n3_mining::propose_template",
+                arguments=[
+                    self.mining_registry_id,
+                    self.staking_registry_id,
+                    self.stake_position_id,  # TODO: Get from staking
+                    height,
+                    list(bytearray(prev_block)),
+                    list(bytearray(merkle_root)),
+                    timestamp,
+                    bits,
+                    coinbase_value,
+                    tx_hashes,
+                    "0x6",  # Clock
+                ]
+            )
+
+            result = txn.execute(gas_budget="200000000")
+
+            if result.is_ok():
+                print 'Template proposed for height %d' % height
+                # TODO: Extract template ID from events
+                return "template_id"
+            else:
+                print >>sys.stderr, 'Template proposal failed:', result.result_string
+                return None
+
+        except Exception as e:
+            print >>sys.stderr, 'Template proposal error:', str(e)
+            return None
+
+    @defer.inlineCallbacks
+    def submit_share(self, share, block_header):
+        """
+        Submit mined share for on-chain verification
+
+        Args:
+            share: P2Pool share object
+            block_header: Bitcoin block header dict
+
+        Returns:
+            True if share accepted
+        """
+        if not self.enabled or not self.current_template_id:
+            defer.returnValue(False)
+
+        try:
+            result = yield threads.deferToThread(
+                self._submit_share_sync,
+                share,
+                block_header
+            )
+
+            defer.returnValue(result)
+
+        except Exception as e:
+            log.err(None, 'Error submitting share:')
+            defer.returnValue(False)
+
+    def _submit_share_sync(self, share, header):
+        """Synchronous share submission"""
+        try:
+            # Calculate share hash
+            share_hash = pack.IntType(256).pack(share.hash)
+
+            # Calculate header hash
+            header_hash = bitcoin_data.hash256(bitcoin_data.block_header_type.pack(header))
+
+            # Serialize share data for verification
+            share_data = self._serialize_share(share)
+
+            txn = SyncTransaction(client=self.client)
+
+            txn.move_call(
+                target=f"{self.package_id}::m1n3_mining::submit_share",
+                arguments=[
+                    self.mining_registry_id,
+                    self.current_template_id,
+                    self.treasury_id,
+                    self.stake_position_id,  # Proposer position
+                    list(bytearray(share_hash)),
+                    list(bytearray(header_hash)),
+                    header['nonce'],
+                    0,  # extra_nonce
+                    list(bytearray(share_data)),
+                    "0x6",  # Clock
+                ]
+            )
+
+            result = txn.execute(gas_budget="200000000")
+
+            if result.is_ok():
+                print 'Share submitted and verified! M1N3 earned.'
+                return True
+            else:
+                print >>sys.stderr, 'Share submission failed:', result.result_string
+                return False
+
+        except Exception as e:
+            print >>sys.stderr, 'Share submission error:', str(e)
+            return False
+
+    def _calculate_merkle_root(self, transactions):
+        """Calculate merkle root from transactions"""
+        if not transactions:
+            return b'\x00' * 32
+
+        # Calculate transaction hashes
+        hashes = [bitcoin_data.hash256(bitcoin_data.tx_type.pack(tx)) for tx in transactions]
+
+        # Build merkle tree
+        while len(hashes) > 1:
+            if len(hashes) % 2 == 1:
+                hashes.append(hashes[-1])  # Duplicate last if odd
+
+            new_hashes = []
+            for i in range(0, len(hashes), 2):
+                combined = hashes[i] + hashes[i+1]
+                new_hashes.append(hashlib.sha256(hashlib.sha256(combined).digest()).digest())
+            hashes = new_hashes
+
+        return hashes[0] if hashes else b'\x00' * 32
+
+    def _serialize_share(self, share):
+        """Serialize share for on-chain verification"""
+        # Simplified - should include all share data
+        return pack.IntType(256).pack(share.hash)
+
+
+# Update global init function
+def init_m1n3_client(config_path=None, package_id=None, registry_id=None,
+                     treasury_id=None, staking_registry_id=None, mining_registry_id=None,
+                     start_height=0, end_height=None, mining_mode=False, stake_amount=None):
+    """Initialize the global M1N3 client"""
+    global _m1n3_client
+    _m1n3_client = M1N3Client(
+        config_path, package_id, registry_id, treasury_id,
+        staking_registry_id, mining_registry_id,
+        start_height, end_height, mining_mode, stake_amount
+    )
     return _m1n3_client

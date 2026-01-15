@@ -635,6 +635,18 @@ def run():
     m1n3_group.add_argument('--m1n3-auto-verify',
         help='automatically register and verify blocks (default: false)',
         action='store_true', default=False, dest='m1n3_auto_verify')
+    m1n3_group.add_argument('--m1n3-mining-mode',
+        help='PHASE 2: Enable real-time mining with staking (after historical verification complete)',
+        action='store_true', default=False, dest='m1n3_mining_mode')
+    m1n3_group.add_argument('--m1n3-staking-registry-id', metavar='STAKING_REGISTRY_ID',
+        help='PHASE 2: StakingRegistry shared object ID (required for mining mode)',
+        type=str, action='store', default=None, dest='m1n3_staking_registry_id')
+    m1n3_group.add_argument('--m1n3-mining-registry-id', metavar='MINING_REGISTRY_ID',
+        help='PHASE 2: MiningRegistry shared object ID (required for mining mode)',
+        type=str, action='store', default=None, dest='m1n3_mining_registry_id')
+    m1n3_group.add_argument('--m1n3-stake-amount', metavar='AMOUNT',
+        help='PHASE 2: Amount of M1N3 to stake for template proposing (default: 100000)',
+        type=float, action='store', default=100000.0, dest='m1n3_stake_amount')
 
     args = parser.parse_args()
     
