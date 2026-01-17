@@ -14,6 +14,7 @@ import bitcoin.getwork as bitcoin_getwork, bitcoin.data as bitcoin_data
 from bitcoin import helper, script, worker_interface
 from util import forest, jsonrpc, variable, deferral, math, pack
 import p2pool, p2pool.data as p2pool_data
+from p2pool import ika_dwallet
 
 print_throttle = 0.0
 
@@ -131,7 +132,52 @@ class WorkerBridge(worker_interface.WorkerBridge):
     
     def stop(self):
         self.running = False
-    
+
+    @defer.inlineCallbacks
+    def handle_block_found_pplns(self, block_height, coinbase_value, header_hash):
+        """
+        Handle PPLNS distribution when a block is found.
+        Proposes distribution to dWallet based on share window.
+
+        Args:
+            block_height: Height of the found block
+            coinbase_value: Block reward in satoshis
+            header_hash: Block header hash for logging
+        """
+        dwallet_manager = ika_dwallet.get_dwallet_manager()
+
+        if dwallet_manager and dwallet_manager.enabled:
+            try:
+                log.msg('Block found! Initiating PPLNS distribution via dWallet...')
+                log.msg('  Block: %064x' % header_hash)
+                log.msg('  Height: %d' % block_height)
+                log.msg('  Coinbase: %.8f BTC' % (coinbase_value / 1e8))
+
+                # TODO: Get share window from on-chain registry
+                # For now, use mock data for demonstration
+                # In production, this would query the MiningRegistry to get
+                # the last N shares from the share window
+
+                recipients = []
+                # Example recipients - in production, calculate from share window
+                # Format: (miner_sui_address, bitcoin_address, amount_satoshis)
+
+                # Propose distribution through dWallet
+                if recipients:
+                    tx_id = yield dwallet_manager.propose_pplns_distribution(recipients)
+                    if tx_id:
+                        log.msg('PPLNS distribution proposed successfully!')
+                        log.msg('  Transaction ID: %s' % tx_id)
+                        log.msg('  Recipients: %d' % len(recipients))
+                        log.msg('  Awaiting threshold signatures for execution...')
+                    else:
+                        log.msg('Failed to propose PPLNS distribution')
+                else:
+                    log.msg('No recipients in PPLNS share window')
+
+            except Exception as e:
+                log.err(None, 'Error handling PPLNS distribution:')
+
     def get_stale_counts(self):
         '''Returns (orphans, doas), total, (orphans_recorded_in_chain, doas_recorded_in_chain)'''
         my_shares = len(self.my_share_hashes)
@@ -401,6 +447,11 @@ class WorkerBridge(worker_interface.WorkerBridge):
                         print
                         print 'GOT BLOCK FROM MINER! Passing to bitcoind! %s%064x' % (self.node.net.PARENT.BLOCK_EXPLORER_URL_PREFIX, header_hash)
                         print
+
+                        # Trigger PPLNS distribution via dWallet if enabled
+                        block_height = self.node.bitcoind_work.value['height']
+                        coinbase_value = self.node.bitcoind_work.value['subsidy']
+                        self.handle_block_found_pplns(block_height, coinbase_value, header_hash)
             except:
                 log.err(None, 'Error while processing potential block:')
             

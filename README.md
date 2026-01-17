@@ -686,7 +686,217 @@ sui client call \
   --args <REGISTRY_ID> ${dwallet.address} ${dwallet.capId}
 ```
 
-#### 5. Advantages of PPLNS Mode
+#### 5. Creating a Shared dWallet for Autonomous Rewards
+
+**Why Shared dWallet?**
+A shared (public) dWallet allows autonomous reward distribution without requiring pool operator intervention for each payout. Multiple authorized signers can approve transactions independently.
+
+**Key Features**:
+- **Public Object**: Anyone can query status and propose distributions
+- **Threshold Security**: Requires N-of-M signatures to execute Bitcoin transactions
+- **Autonomous**: Signers can independently approve rewards based on on-chain PPLNS data
+- **Transparent**: All pending transactions visible on-chain
+
+**Step-by-Step Creation**:
+
+**1. Install Dependencies**:
+```bash
+# Install IKA SDK
+npm install @dwallet-labs/ika
+
+# Install Sui CLI (if not already installed)
+cargo install --locked --git https://github.com/MystenLabs/sui.git --branch mainnet sui
+```
+
+**2. Configure Signers** (Pool Operators):
+```javascript
+// signers.js - Configure authorized signers for the pool
+const signers = [
+  '0xSIGNER_1_SUI_ADDRESS',  // Pool operator 1
+  '0xSIGNER_2_SUI_ADDRESS',  // Pool operator 2
+  '0xSIGNER_3_SUI_ADDRESS',  // Pool operator 3
+];
+
+const threshold = 2;  // Require 2 of 3 signatures
+const network = 'mainnet';  // or 'testnet', 'signet'
+```
+
+**3. Create IKA dWallet** (JavaScript):
+```javascript
+// create-dwallet.js
+import { IkaClient } from '@dwallet-labs/ika';
+import { SuiClient } from '@mysten/sui.js/client';
+
+async function createPoolDWallet() {
+  // Initialize Sui client
+  const suiClient = new SuiClient({
+    url: 'https://fullnode.mainnet.sui.io:443'
+  });
+
+  // Initialize IKA client
+  const ika = new IkaClient(suiClient);
+
+  // Create 2-of-3 multisig dWallet for Bitcoin
+  const dwallet = await ika.createDWallet({
+    network: 'bitcoin',
+    threshold: 2,
+    participants: signers
+  });
+
+  // Get Bitcoin address for pool coinbase
+  const btcAddress = await dwallet.getAddress('bitcoin');
+
+  console.log('dWallet Created Successfully!');
+  console.log('  dWallet ID:', dwallet.id);
+  console.log('  Bitcoin Address:', btcAddress);
+  console.log('  Capability ID:', dwallet.capId);
+  console.log('  Threshold:', threshold, '/', signers.length);
+
+  return {
+    dwalletId: dwallet.id,
+    bitcoinAddress: btcAddress,
+    capId: dwallet.capId
+  };
+}
+
+createPoolDWallet().then(result => {
+  console.log('\nUse this Bitcoin address for pool coinbase:');
+  console.log(result.bitcoinAddress);
+});
+```
+
+**4. Register as Shared Object** (Sui):
+```bash
+# Create shared dWallet on Sui blockchain
+sui client call \
+  --package <M1N3_PACKAGE_ID> \
+  --module m1n3_dwallet \
+  --function create_shared_dwallet \
+  --args \
+    "[$(echo -n ${BTC_ADDRESS} | xxd -p -c 256)]" \
+    "[$(echo -n ${DWALLET_CAP_ID} | xxd -p -c 256)]" \
+    "[$(echo -n 'mainnet' | xxd -p -c 256)]" \
+    2 \
+    "['0xSIGNER_1','0xSIGNER_2','0xSIGNER_3']" \
+  --gas-budget 10000000
+```
+
+**5. Configure in M1N3**:
+```bash
+# Link the shared dWallet to M1N3 mining registry
+sui client call \
+  --package <M1N3_PACKAGE_ID> \
+  --module m1n3_mining \
+  --function set_dwallet \
+  --args <MINING_REGISTRY_ID> \
+    "[$(echo -n ${BTC_ADDRESS} | xxd -p -c 256)]" \
+    "[$(echo -n ${DWALLET_CAP_ID} | xxd -p -c 256)]"
+```
+
+**6. Set Pool Coinbase** (Bitcoin Core):
+```bash
+# Update bitcoin.conf to mine to dWallet address
+echo "
+# M1N3 Pool dWallet address
+miningaddress=${BTC_ADDRESS}
+" >> ~/.bitcoin/bitcoin.conf
+
+# Restart Bitcoin Core
+bitcoin-cli stop && sleep 5 && bitcoind -daemon
+```
+
+#### 6. Autonomous Reward Distribution
+
+**How Autonomous Rewards Work**:
+
+When a block is found, PPLNS rewards are distributed **automatically** through on-chain coordination:
+
+**Flow**:
+1. **Block Found**: Miner finds block, coinbase goes to dWallet Bitcoin address
+2. **Calculate Rewards**: M1N3 contract calculates PPLNS shares from on-chain share window
+3. **Propose Distribution**: Anyone can propose reward transaction based on on-chain data
+4. **Threshold Signing**: Authorized signers approve the distribution
+5. **IKA Execution**: Once threshold reached, IKA 2PC-MPC signs Bitcoin transaction
+6. **Bitcoin Payout**: Miners receive Bitcoin directly to their addresses
+
+**Proposing Rewards** (Python - Automated):
+```python
+# In p2pool/ika_dwallet.py
+from p2pool import ika_dwallet
+
+# Initialize dWallet manager
+dwallet = ika_dwallet.init_dwallet_manager({
+    'enabled': True,
+    'network': 'mainnet',
+    'threshold': 2,
+    'participants': [
+        '0xSIGNER_1_SUI_ADDRESS',
+        '0xSIGNER_2_SUI_ADDRESS',
+        '0xSIGNER_3_SUI_ADDRESS',
+    ],
+    'package_id': '<M1N3_PACKAGE_ID>',
+})
+
+# When block is found, propose PPLNS distribution
+recipients = [
+    (miner1_sui_addr, miner1_btc_addr, 12500000),  # 0.125 BTC
+    (miner2_sui_addr, miner2_btc_addr, 37500000),  # 0.375 BTC
+    (miner3_sui_addr, miner3_btc_addr, 50000000),  # 0.5 BTC
+]
+
+tx_id = yield dwallet.propose_pplns_distribution(recipients)
+print('Distribution proposed:', tx_id)
+```
+
+**Approving Rewards** (Sui - Each Signer):
+```bash
+# Each authorized signer approves the distribution
+sui client call \
+  --package <M1N3_PACKAGE_ID> \
+  --module m1n3_dwallet \
+  --function sign_transaction \
+  --args <SHARED_DWALLET_ID> <TRANSACTION_ID> \
+  --gas-budget 5000000
+```
+
+**Monitoring Status**:
+```bash
+# Check pending distributions
+sui client object <SHARED_DWALLET_ID> --json | jq '.data.content.fields.pending_transactions'
+
+# Watch for threshold reached
+sui client events --type 'm1n3_dwallet::TransactionExecuted'
+```
+
+**Automated Signer** (Optional):
+```javascript
+// auto-signer.js - Automatically sign valid PPLNS distributions
+import { SuiClient } from '@mysten/sui.js/client';
+
+const suiClient = new SuiClient({ url: 'https://fullnode.mainnet.sui.io:443' });
+
+// Listen for new distribution proposals
+suiClient.subscribeEvent({
+  filter: { MoveEventType: 'm1n3_dwallet::TransactionProposed' },
+  onMessage: async (event) => {
+    const { dwallet_id, tx_id, recipients } = event.parsedJson;
+
+    // Verify distribution matches on-chain PPLNS data
+    const isValid = await verifyPPLNSDistribution(tx_id, recipients);
+
+    if (isValid) {
+      console.log('Auto-signing valid distribution:', tx_id);
+      await signTransaction(dwallet_id, tx_id);
+    } else {
+      console.warn('Invalid distribution detected:', tx_id);
+    }
+  }
+});
+
+console.log('Automated signer running...');
+```
+
+#### 7. Advantages of PPLNS Mode
 
 **For Miners**:
 - Real Bitcoin payouts (no token conversion)
