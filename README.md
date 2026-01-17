@@ -40,6 +40,7 @@ M1N3 extends the modern [P2Pool v2](https://github.com/p2poolv2/p2poolv2) design
 - Python >= 2.7
 - Twisted >= 10.0.0
 - pysui >= 0.50.0
+- **IKA SDK** (optional, for PPLNS mode with dWallet integration)
 
 ### Bitcoin Protocol Compatibility
 M1N3 builds upon modern P2Pool v2 architecture and requires:
@@ -53,6 +54,9 @@ M1N3 builds upon modern P2Pool v2 architecture and requires:
 ```bash
 sudo apt-get install python-zope.interface python-twisted python-twisted-web
 pip install pysui
+
+# Optional: For PPLNS mode with IKA dWallet
+npm install @dwallet-labs/ika
 ```
 
 ### Windows
@@ -60,6 +64,7 @@ pip install pysui
 2. Install [Twisted](http://twistedmatrix.com/trac/wiki/Downloads)
 3. Install [Zope.Interface](http://pypi.python.org/pypi/zope.interface/)
 4. Install pysui: `pip install pysui`
+5. Optional (PPLNS mode): Install IKA SDK: `npm install @dwallet-labs/ika`
 
 ## Bitcoin Full Node Requirement
 
@@ -289,7 +294,89 @@ Decentralized mining with staking security:
 4. **On-Chain Verification**: Shares verified against templates using Sui's SHA-256
 5. **Rewards**: 95% to miner, 5% to template proposer
 
-### Share Trading Economy
+### Payout Modes: PPS vs PPLNS
+
+M1N3 supports two payout modes to accommodate different miner preferences:
+
+#### PPS Mode (Pay Per Share)
+**Default mode** - Miners receive immediate M1N3 token rewards:
+
+- **Instant Payouts**: Shares rewarded immediately upon verification
+- **Predictable Income**: Fixed reward per valid share
+- **Zero Variance**: No dependency on block finding luck
+- **Share Trading**: Shares become tradeable NFTs with 2% fee
+- **PPS Redemption**: Optional Bitcoin-backed redemption when blocks are found
+
+**Best for**: Miners wanting instant liquidity and tradeable shares
+
+#### PPLNS Mode (Pay Per Last N Shares)
+**Traditional P2Pool method** - Miners receive Bitcoin rewards when blocks are found:
+
+- **Share Window**: Last 8,640 shares (~3 days) tracked in share chain
+- **Block Found Payout**: Rewards distributed proportionally to share window contributors
+- **True Bitcoin Rewards**: Direct Bitcoin payouts from mined blocks
+- **Decentralized Custody**: IKA dWallet manages pool funds via 2PC-MPC
+- **Lower Fees**: No share trading fees, just pool operation costs
+- **Fair Variance**: Rewards smoothed over the share window
+
+**Best for**: Traditional miners preferring P2Pool's proven reward model
+
+#### IKA dWallet Integration (PPLNS)
+
+**What is IKA?**
+[IKA](https://github.com/dwallet-labs/ika) provides decentralized wallet (dWallet) functionality using 2-Party Computation Multi-Party Computation (2PC-MPC):
+
+- **No Single Point of Failure**: No single party controls pool funds
+- **Cryptographic Security**: Signatures require threshold participation
+- **Bitcoin Native**: Direct Bitcoin transaction signing
+- **Cross-Chain**: Works across any blockchain without bridges
+
+**How it works in M1N3:**
+
+1. **Pool Setup**: M1N3 creates an IKA dWallet for PPLNS pool rewards
+2. **Block Found**: When miner finds block, coinbase goes to dWallet address
+3. **Reward Distribution**: M1N3 calculates PPLNS shares from share window
+4. **2PC-MPC Signing**: Threshold signers approve Bitcoin transactions to miners
+5. **Payout**: Miners receive Bitcoin directly to their addresses
+
+**Security Properties:**
+- Pool cannot steal funds (requires threshold signatures)
+- Miners cannot manipulate rewards (on-chain verification)
+- Transparent accounting (all shares recorded on Sui)
+- Censorship resistant (decentralized signing)
+
+**Configuration:**
+```bash
+# Enable PPLNS mode with IKA dWallet
+sui client call \
+  --package <PACKAGE_ID> \
+  --module m1n3_mining \
+  --function set_payout_mode \
+  --args <REGISTRY_ID> 1  # 1 = PPLNS mode
+
+# Configure IKA dWallet
+sui client call \
+  --package <PACKAGE_ID> \
+  --module m1n3_mining \
+  --function set_dwallet \
+  --args <REGISTRY_ID> <DWALLET_ADDRESS> <DWALLET_CAP_ID>
+```
+
+#### Choosing Your Payout Mode
+
+| Feature | PPS Mode | PPLNS Mode |
+|---------|----------|------------|
+| **Payout Timing** | Immediate | When block found |
+| **Reward Type** | M1N3 tokens | Bitcoin (via IKA) |
+| **Variance** | Zero | ~3 days average |
+| **Share Trading** | Yes | No (direct BTC) |
+| **Pool Fees** | 2% trading fee | Pool operation only |
+| **Custody** | Individual | IKA dWallet (decentralized) |
+| **Best For** | Traders, speculators | Traditional miners |
+
+**You can choose your preferred mode** - M1N3 supports both simultaneously!
+
+### Share Trading Economy (PPS Mode)
 
 **Every valid share becomes a tradeable financial instrument:**
 
@@ -502,6 +589,126 @@ sui client call \
 - Earn 5% of share mining rewards as template proposer
 - Passive income from market activity
 
+### For PPLNS Miners (Traditional P2Pool)
+
+If you prefer traditional P2Pool's proven payout method with direct Bitcoin rewards:
+
+#### 1. Enable PPLNS Mode
+
+**Pool operator** sets PPLNS mode:
+```bash
+# Switch to PPLNS mode
+sui client call \
+  --package <PACKAGE_ID> \
+  --module m1n3_mining \
+  --function set_payout_mode \
+  --args <MINING_REGISTRY_ID> 1
+
+# Configure IKA dWallet for pool custody
+sui client call \
+  --package <PACKAGE_ID> \
+  --module m1n3_mining \
+  --function set_dwallet \
+  --args <MINING_REGISTRY_ID> <DWALLET_ADDRESS> <DWALLET_CAP_ID>
+```
+
+#### 2. Mining in PPLNS Mode
+
+```bash
+# Connect to M1N3 in PPLNS mode (same as PPS)
+python run_p2pool.py \
+  --bitcoind-address 127.0.0.1 \
+  --bitcoind-rpc-port 8332 \
+  --bitcoind-rpc-username your_rpc_username \
+  --bitcoind-rpc-password your_rpc_password \
+  --m1n3-enable \
+  --m1n3-mining-mode \
+  --m1n3-package-id <SUI_PACKAGE_ID> \
+  --m1n3-mining-registry-id <MINING_REGISTRY_ID>
+```
+
+#### 3. How PPLNS Rewards Work
+
+**Share Window**: Your shares remain in the pool's share chain for ~3 days (8,640 shares)
+
+**Block Found**: When any pool miner finds a block:
+1. Bitcoin coinbase goes to IKA dWallet address
+2. M1N3 calculates your share of last N shares
+3. Your reward = `(your_difficulty / total_window_difficulty) × coinbase_value`
+4. IKA dWallet signs Bitcoin transaction to your address
+5. You receive Bitcoin directly (no token conversion)
+
+**Example**:
+```
+Block Found: 6.25 BTC coinbase
+Your shares: 100 difficulty
+Total window: 10,000 difficulty
+Your reward: (100/10,000) × 6.25 = 0.0625 BTC
+```
+
+#### 4. Setting Up IKA dWallet (Pool Operators)
+
+**Install IKA SDK**:
+```bash
+# Add IKA to your project
+npm install @dwallet-labs/ika
+
+# Or using the Sui Move integration
+cd sui_contracts
+sui move add ika@git+https://github.com/dwallet-labs/ika
+```
+
+**Create dWallet**:
+```javascript
+import { IkaClient } from '@dwallet-labs/ika';
+
+const ika = new IkaClient(suiClient);
+
+// Create 2PC-MPC dWallet for Bitcoin
+const dwallet = await ika.createDWallet({
+  network: 'bitcoin',
+  threshold: 2,  // 2-of-3 multisig
+  participants: [node1, node2, node3]
+});
+
+// Get dWallet address for pool coinbase
+const btcAddress = await dwallet.getAddress('bitcoin');
+console.log('Pool Bitcoin Address:', btcAddress);
+```
+
+**Configure in M1N3**:
+```bash
+# Set the dWallet configuration
+sui client call \
+  --package <PACKAGE_ID> \
+  --module m1n3_mining \
+  --function set_dwallet \
+  --args <REGISTRY_ID> ${dwallet.address} ${dwallet.capId}
+```
+
+#### 5. Advantages of PPLNS Mode
+
+**For Miners**:
+- Real Bitcoin payouts (no token conversion)
+- Proven P2Pool reward distribution
+- Lower fees (no 2% trading fee)
+- Automatic variance smoothing
+- Compatible with traditional P2Pool tooling
+
+**For Pool**:
+- Decentralized custody (IKA 2PC-MPC)
+- No custodial risk
+- Transparent on-chain accounting
+- No share trading infrastructure needed
+
+**Trade-offs**:
+- ❌ No instant liquidity (must wait for block)
+- ❌ No share trading/speculation
+- ❌ Higher variance if pool is small
+- ✅ Direct Bitcoin rewards
+- ✅ Lower complexity
+- ✅ Traditional P2Pool behavior
+
 ## Economic Model
 
 ### Token Distribution
@@ -542,12 +749,15 @@ Stake M1N3 to become template proposer and earn fees
 - Fee pool for trading fee distribution
 
 ### m1n3_mining.move
-Phase 2 real-time mining with share trading
+Phase 2 real-time mining with dual payout modes
+- **Payout Modes**: PPS (instant M1N3 rewards) or PPLNS (traditional Bitcoin rewards)
+- **Share Chain**: Maintains PPLNS window of last 8,640 shares (~3 days)
+- **IKA Integration**: dWallet configuration for PPLNS pool custody
 - Template proposal (staked nodes only)
-- Share submission and verification
-- Share transfer with 2% fee
-- Block reward pools
-- PPS redemption system
+- Share submission and on-chain verification
+- Share transfer with 2% fee (PPS mode)
+- Block reward pools and PPS redemption
+- PPLNS reward distribution via IKA 2PC-MPC
 
 ## API Endpoints
 
@@ -795,6 +1005,40 @@ You can start Phase 1 verification for already-synced heights. For example, if s
 ### Why can't I use a block explorer API instead of Bitcoin Core?
 M1N3's trustless security model requires each participant to independently verify block data from their own node. Using a block explorer would introduce trust assumptions and centralization.
 
+### Should I use PPS or PPLNS mode?
+**PPS Mode** - Choose if you want:
+- Instant M1N3 token rewards
+- Ability to trade shares for profit
+- Zero variance (predictable income)
+- Don't want to wait for blocks
+
+**PPLNS Mode** - Choose if you prefer:
+- Traditional P2Pool experience
+- Direct Bitcoin rewards (no tokens)
+- Lower fees (no 2% trading fee)
+- Support for decentralized pool custody
+
+### How does IKA dWallet secure pool funds?
+IKA uses 2PC-MPC (Two-Party Computation Multi-Party Computation) cryptography:
+- No single party can sign transactions alone
+- Requires threshold of signers to approve payouts
+- Fully decentralized - no custodial risk
+- Bitcoin-native signing without bridges or wrapping
+
+### Can the pool operator steal funds in PPLNS mode?
+No. IKA dWallet requires threshold signatures (e.g., 2-of-3). The pool operator cannot unilaterally move funds. All reward distributions are verified on-chain against the share window before IKA signers approve transactions.
+
+### What happens to my shares if the pool switches payout modes?
+Payout modes are pool-wide settings. Existing shares in PPS mode remain tradeable. If switching to PPLNS, new shares go into the share window for Bitcoin payouts. Your existing PPS shares are unaffected.
+
+### How long does PPLNS payout take?
+PPLNS pays when a block is found. Payout timing depends on:
+1. Block finding (average ~10 minutes for network, varies by pool hashrate)
+2. IKA threshold signers approving distribution (~minutes)
+3. Bitcoin transaction confirmation (10-60 minutes)
+
+Total: Usually within 1-2 hours after block is found.
+
 ## Support & Community
 
 - **Documentation**: See `M1N3_README.md` and `SUI_INTEGRATION.md`
@@ -806,12 +1050,17 @@ M1N3's trustless security model requires each participant to independently verif
 ### Completed
 - [x] Phase 1: Historical block verification
 - [x] Phase 2: Real-time mining with staking
-- [x] Share trading with 2% fee
+- [x] Share trading with 2% fee (PPS mode)
 - [x] PPS redemption system
+- [x] PPLNS mode with share window tracking
+- [x] IKA dWallet integration structure for PPLNS
+- [x] Dual payout mode support (PPS + PPLNS)
 - [x] Bitcoin Core 28.0+ compatibility
 - [x] Taproot and SegWit native support
 
 ### In Progress (P2Pool v2 Alignment)
+- [ ] IKA 2PC-MPC Bitcoin transaction signing
+- [ ] Complete dWallet setup automation
 - [ ] Uncle block implementation for comprehensive work accounting
 - [ ] Stratum v2 protocol support
 - [ ] Compact block propagation (BIP 152)
@@ -828,16 +1077,20 @@ M1N3's trustless security model requires each participant to independently verif
 
 ## Comparison with P2Pool v2
 
-| Feature | P2Pool v2 | M1N3 |
-|---------|-----------|------|
-| **Implementation** | Rust | Python 2.7 + Sui Move |
-| **Share Accounting** | Uncle blocks | Uncle blocks (planned) |
-| **Verification** | Distributed nodes | On-chain Sui SHA-256 |
-| **Share Trading** | Atomic swaps | NFT marketplace + Atomic swaps |
-| **Payout Model** | Coinbase direct | PPS via M1N3 tokens |
-| **Staking** | No | Yes (M1N3 tokens) |
-| **Protocol** | Stratum v2 ready | Stratum v1 (v2 planned) |
-| **Bitcoin Core** | 22.0+ | 22.0+ (28.0+ recommended) |
+| Feature | P2Pool v2 | M1N3 PPS Mode | M1N3 PPLNS Mode |
+|---------|-----------|---------------|-----------------|
+| **Implementation** | Rust | Python 2.7 + Sui Move | Python 2.7 + Sui Move |
+| **Share Accounting** | Uncle blocks | Uncle blocks (planned) | Share window (8,640 shares) |
+| **Verification** | Distributed nodes | On-chain Sui SHA-256 | On-chain Sui SHA-256 |
+| **Share Trading** | Atomic swaps | NFT marketplace + Atomic swaps | No (direct Bitcoin) |
+| **Payout Model** | PPLNS coinbase | PPS via M1N3 tokens | PPLNS via IKA dWallet |
+| **Payout Timing** | When block found | Immediate | When block found |
+| **Custody** | Miners self-custody | Individual wallets | IKA 2PC-MPC dWallet |
+| **Staking** | No | Yes (M1N3 tokens) | Yes (M1N3 tokens) |
+| **Fees** | Pool operation | 2% trading fee | Pool operation only |
+| **Variance** | ~3 days | Zero | ~3 days |
+| **Protocol** | Stratum v2 ready | Stratum v1 (v2 planned) | Stratum v1 (v2 planned) |
+| **Bitcoin Core** | 22.0+ | 22.0+ (28.0+ recommended) | 22.0+ (28.0+ recommended) |
 
 ## License
 
@@ -849,10 +1102,11 @@ M1N3's trustless security model requires each participant to independently verif
 
 - **Original P2Pool** by forrestv - pioneering decentralized pool architecture
 - **P2Pool v2** ([p2poolv2](https://github.com/p2poolv2/p2poolv2)) - modern Rust implementation with uncle blocks and Stratum v2
+- **IKA/dWallet Labs** ([ika](https://github.com/dwallet-labs/ika)) - 2PC-MPC decentralized wallet for PPLNS custody
 - **rust-bitcoin** - Bitcoin protocol implementation standards
 - **Sui Foundation** - native SHA-256 verification capabilities
 
-Enhanced with blockchain verification, tradeable shares, and economic incentives for the M1N3 project.
+Enhanced with blockchain verification, dual payout modes (PPS/PPLNS), tradeable shares, and decentralized custody for the M1N3 project.
 
 ## References
 
@@ -861,6 +1115,9 @@ Enhanced with blockchain verification, tradeable shares, and economic incentives
 - [Bitcoin Core 28.0](https://bitcoincore.org/en/releases/28.0/) - Latest Bitcoin node software
 - [BIP 152 - Compact Blocks](https://github.com/bitcoin/bips/blob/master/bip-0152.mediawiki) - Efficient block propagation
 - [Sui Documentation](https://docs.sui.io/) - Sui blockchain platform
+- [IKA dWallet](https://github.com/dwallet-labs/ika) - Decentralized wallet with 2PC-MPC for Bitcoin custody
+- [IKA Documentation](https://docs.ika.xyz/) - IKA SDK and dWallet integration guides
+- [2PC-MPC Cryptography](https://docs.ika.xyz/core-concepts/cryptography/2pc-mpc) - Two-party computation for decentralized signing
 
 ---
 

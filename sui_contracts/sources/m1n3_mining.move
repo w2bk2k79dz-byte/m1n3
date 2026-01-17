@@ -31,6 +31,22 @@ module p2pool_shares::m1n3_mining {
     /// Share transfer fee (2% goes to M1N3 stakers)
     const SHARE_TRANSFER_FEE_PERCENT: u64 = 2;
 
+    /// PPLNS window size (last N shares to consider for rewards)
+    /// Traditional P2Pool uses 3x network difficulty worth of shares
+    const PPLNS_WINDOW_SIZE: u64 = 8640; // ~3 days of shares at 30s/share
+
+    /// Payout modes
+    const PAYOUT_MODE_PPS: u8 = 0;   // Pay Per Share (immediate)
+    const PAYOUT_MODE_PPLNS: u8 = 1; // Pay Per Last N Shares (traditional P2Pool)
+
+    /// Share chain entry for PPLNS accounting
+    struct ShareChainEntry has store, drop {
+        miner: address,
+        difficulty: u64,
+        timestamp: u64,
+        share_id: address,
+    }
+
     /// Block template proposed by staked node
     struct MiningTemplate has key, store {
         id: UID,
@@ -137,6 +153,14 @@ module p2pool_shares::m1n3_mining {
         total_fees_collected: u64,
         /// Mode: false = historical verification, true = real-time mining
         mining_mode_active: bool,
+        /// Payout mode: 0 = PPS, 1 = PPLNS
+        payout_mode: u8,
+        /// Share window for PPLNS (circular buffer of last N shares)
+        share_window: vector<ShareChainEntry>,
+        /// IKA dWallet address for pool Bitcoin rewards (PPLNS mode)
+        dwallet_address: vector<u8>,
+        /// IKA dWallet cap ID for signing transactions
+        dwallet_cap_id: vector<u8>,
     }
 
     /// Events
@@ -210,6 +234,10 @@ module p2pool_shares::m1n3_mining {
             total_shares_traded: 0,
             total_fees_collected: 0,
             mining_mode_active: false,
+            payout_mode: PAYOUT_MODE_PPS, // Default to PPS mode
+            share_window: vector::empty<ShareChainEntry>(),
+            dwallet_address: vector::empty<u8>(),
+            dwallet_cap_id: vector::empty<u8>(),
         };
         transfer::share_object(registry);
     }
@@ -226,6 +254,27 @@ module p2pool_shares::m1n3_mining {
             timestamp: clock::timestamp_ms(clock),
             message: b"M1N3 mining mode activated! Historical verification complete.",
         });
+    }
+
+    /// Set payout mode (PPS or PPLNS)
+    public entry fun set_payout_mode(
+        registry: &mut MiningRegistry,
+        mode: u8,
+        _ctx: &mut TxContext
+    ) {
+        assert!(mode == PAYOUT_MODE_PPS || mode == PAYOUT_MODE_PPLNS, 10);
+        registry.payout_mode = mode;
+    }
+
+    /// Configure IKA dWallet for PPLNS pool rewards
+    public entry fun set_dwallet(
+        registry: &mut MiningRegistry,
+        dwallet_address: vector<u8>,
+        dwallet_cap_id: vector<u8>,
+        _ctx: &mut TxContext
+    ) {
+        registry.dwallet_address = dwallet_address;
+        registry.dwallet_cap_id = dwallet_cap_id;
     }
 
     /// Propose block template (only staked nodes)
@@ -390,6 +439,23 @@ module p2pool_shares::m1n3_mining {
             // Record proposer reward
             m1n3_staking::add_proposer_reward(proposer_position, proposer_fee);
             m1n3_staking::record_share_verification(proposer_position);
+
+            // Add to PPLNS share window if in PPLNS mode
+            if (registry.payout_mode == PAYOUT_MODE_PPLNS) {
+                let entry = ShareChainEntry {
+                    miner: sender,
+                    difficulty: bits_to_difficulty(template.bits),
+                    timestamp: current_time,
+                    share_id: share_addr,
+                };
+                vector::push_back(&mut registry.share_window, entry);
+
+                // Maintain window size (remove oldest if exceeds)
+                let window_len = vector::length(&registry.share_window);
+                if (window_len > PPLNS_WINDOW_SIZE) {
+                    vector::remove(&mut registry.share_window, 0);
+                };
+            };
         };
 
         if (found_block) {
@@ -622,6 +688,57 @@ module p2pool_shares::m1n3_mining {
 
         // Transfer redemption reward
         transfer::public_transfer(reward_coin, sender);
+    }
+
+    /// Distribute PPLNS rewards when block is found (traditional P2Pool)
+    /// This requires IKA dWallet integration to sign Bitcoin transactions
+    public entry fun distribute_pplns_rewards(
+        registry: &mut MiningRegistry,
+        height: u32,
+        coinbase_value: u64,
+        _ctx: &mut TxContext
+    ) {
+        // Only works in PPLNS mode
+        assert!(registry.payout_mode == PAYOUT_MODE_PPLNS, 11);
+
+        // Calculate total difficulty in share window
+        let total_difficulty: u64 = 0;
+        let window_len = vector::length(&registry.share_window);
+        let i = 0;
+        while (i < window_len) {
+            let entry = vector::borrow(&registry.share_window, i);
+            total_difficulty = total_difficulty + entry.difficulty;
+            i = i + 1;
+        };
+
+        // Calculate each miner's proportion and prepare reward distribution
+        // Note: Actual Bitcoin payout requires IKA dWallet signing
+        // This creates the accounting for the reward distribution
+        i = 0;
+        while (i < window_len) {
+            let entry = vector::borrow(&registry.share_window, i);
+            let miner_share = (entry.difficulty * 1000000) / total_difficulty; // Fixed point
+            let miner_reward = (coinbase_value * miner_share) / 1000000;
+
+            // TODO: Sign Bitcoin transaction via IKA dWallet
+            // This would require calling IKA 2PC-MPC protocol to create
+            // a Bitcoin transaction sending miner_reward to entry.miner
+
+            // For now, emit event with reward information
+            event::emit(ShareRedeemed {
+                share_id: entry.share_id,
+                height,
+                owner: entry.miner,
+                difficulty: entry.difficulty,
+                pps_reward: miner_reward, // Using same event, but represents PPLNS payout
+                timestamp: entry.timestamp,
+            });
+
+            i = i + 1;
+        };
+
+        // Clear share window after distribution
+        registry.share_window = vector::empty<ShareChainEntry>();
     }
 
     /// Helper: Construct template data for hashing
