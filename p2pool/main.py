@@ -167,31 +167,31 @@ def main(args, net, datadir_path, merged_urls, worker_endpoint):
 
         # Initialize IKA dWallet for PPLNS if enabled
         if args.dwallet_enable:
-            print 'Initializing IKA dWallet for PPLNS autonomous rewards...'
+            print 'Initializing IKA dWallet for autonomous PPLNS rewards...'
             from p2pool import ika_dwallet
 
-            # Parse participants list
-            participants = []
-            if args.dwallet_participants:
-                participants = [addr.strip() for addr in args.dwallet_participants.split(',') if addr.strip()]
-
             # Create dWallet configuration
-            dwallet_config = ika_dwallet.create_ika_config(
-                network=args.dwallet_network,
-                threshold=args.dwallet_threshold,
-                participants=participants
-            )
-            dwallet_config['package_id'] = args.dwallet_package_id or args.m1n3_package_id
+            dwallet_config = {
+                'enabled': True,
+                'network': args.dwallet_network,
+                'package_id': args.m1n3_package_id,
+                'bitcoin_address': args.dwallet_bitcoin_address,
+                'dwallet_cap_id': args.dwallet_cap_id,
+                'dwallet_id': args.dwallet_id,
+            }
 
             # Initialize dWallet manager
             dwallet_manager = ika_dwallet.init_dwallet_manager(dwallet_config)
 
             if dwallet_manager.enabled:
-                print '    ...success! IKA dWallet enabled for PPLNS.'
+                print '    ...success! IKA dWallet enabled for autonomous PPLNS.'
                 print '    Network:', args.dwallet_network
-                print '    Threshold:', '%d/%d' % (args.dwallet_threshold, len(participants))
-                print '    Participants:', len(participants)
-                print '    NOTE: Use create-dwallet.js to create the dWallet before mining'
+                if args.dwallet_bitcoin_address:
+                    print '    Bitcoin Address:', args.dwallet_bitcoin_address
+                    print '    IKA network will execute distributions AUTOMATICALLY'
+                    print '    NO MANUAL APPROVALS needed - fully autonomous!'
+                else:
+                    print '    NOTE: Create dWallet via IKA SDK first and provide --dwallet-bitcoin-address'
             else:
                 print '    ...failed! dWallet integration disabled.'
             print
@@ -683,22 +683,22 @@ def run():
         help='PHASE 2: Amount of M1N3 to stake for template proposing (default: 100000)',
         type=float, action='store', default=100000.0, dest='m1n3_stake_amount')
 
-    dwallet_group = parser.add_argument_group('IKA dWallet - PPLNS autonomous rewards')
+    dwallet_group = parser.add_argument_group('IKA dWallet - PPLNS autonomous rewards (Sui + IKA)')
     dwallet_group.add_argument('--dwallet-enable',
-        help='enable IKA dWallet for PPLNS mode autonomous rewards',
+        help='enable IKA dWallet for autonomous PPLNS Bitcoin rewards (IKA network executes automatically)',
         action='store_true', default=False, dest='dwallet_enable')
     dwallet_group.add_argument('--dwallet-network', metavar='NETWORK',
         help='Bitcoin network for dWallet (mainnet, testnet, signet) (default: mainnet)',
         type=str, action='store', default='mainnet', dest='dwallet_network')
-    dwallet_group.add_argument('--dwallet-threshold', metavar='N',
-        help='threshold for dWallet signatures (e.g., 2 for 2-of-3) (default: 2)',
-        type=int, action='store', default=2, dest='dwallet_threshold')
-    dwallet_group.add_argument('--dwallet-participants', metavar='ADDRESSES',
-        help='comma-separated list of Sui addresses authorized to sign (e.g., 0xAAA,0xBBB,0xCCC)',
-        type=str, action='store', default='', dest='dwallet_participants')
-    dwallet_group.add_argument('--dwallet-package-id', metavar='PACKAGE_ID',
-        help='M1N3 package ID for dWallet registration (same as --m1n3-package-id)',
-        type=str, action='store', default=None, dest='dwallet_package_id')
+    dwallet_group.add_argument('--dwallet-bitcoin-address', metavar='ADDRESS',
+        help='Bitcoin address from IKA dWallet (create via IKA SDK first)',
+        type=str, action='store', default=None, dest='dwallet_bitcoin_address')
+    dwallet_group.add_argument('--dwallet-cap-id', metavar='CAP_ID',
+        help='dWallet capability ID from IKA (required for registration)',
+        type=str, action='store', default=None, dest='dwallet_cap_id')
+    dwallet_group.add_argument('--dwallet-id', metavar='DWALLET_ID',
+        help='existing shared dWallet object ID on Sui (if already created)',
+        type=str, action='store', default=None, dest='dwallet_id')
 
     args = parser.parse_args()
     

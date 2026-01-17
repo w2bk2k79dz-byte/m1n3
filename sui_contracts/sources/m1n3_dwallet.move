@@ -7,52 +7,50 @@ module p2pool_shares::m1n3_dwallet {
     use std::vector;
 
     /// Error codes
-    const E_NOT_AUTHORIZED: u64 = 1;
-    const E_DWALLET_ALREADY_EXISTS: u64 = 2;
-    const E_INVALID_THRESHOLD: u64 = 3;
-    const E_INSUFFICIENT_APPROVALS: u64 = 4;
+    const E_INVALID_NETWORK: u64 = 1;
+    const E_INVALID_REGISTRY: u64 = 2;
 
     /// Shared dWallet for autonomous PPLNS reward distribution
-    /// This is a public/shared object that anyone can interact with,
-    /// but requires threshold signatures for actual Bitcoin transactions
+    /// Sui network maintains accountability, IKA network executes Bitcoin transactions automatically
     struct SharedDWallet has key, store {
         id: UID,
-        /// Bitcoin address derived from dWallet
+        /// Bitcoin address derived from IKA dWallet
         bitcoin_address: vector<u8>,
-        /// dWallet capability ID from IKA
+        /// IKA dWallet capability ID
         dwallet_cap_id: vector<u8>,
-        /// Network (mainnet, testnet, signet)
+        /// Bitcoin network (mainnet, testnet, signet)
         network: vector<u8>,
-        /// Threshold for signatures (e.g., 2 for 2-of-3)
-        threshold: u8,
-        /// Total participants in the dWallet
-        total_participants: u8,
-        /// Authorized signers (participant addresses)
-        authorized_signers: vector<address>,
-        /// Pending transactions awaiting signatures
-        pending_transactions: Table<ID, PendingTransaction>,
-        /// Total transactions processed
-        total_transactions: u64,
+        /// Mining registry ID for PPLNS verification
+        mining_registry_id: ID,
+        /// Distribution history (distribution_id => execution status)
+        distributions: Table<u64, DistributionRecord>,
+        /// Total distributions proposed
+        distribution_count: u64,
         /// Total Bitcoin distributed (in satoshis)
         total_distributed: u64,
         /// Created at timestamp
         created_at: u64,
     }
 
-    /// Pending transaction awaiting threshold signatures
-    struct PendingTransaction has store, drop {
-        /// Transaction ID
-        tx_id: ID,
-        /// Recipients and amounts (Bitcoin address => satoshis)
-        recipients: vector<Recipient>,
-        /// Total amount to distribute
+    /// Record of a PPLNS distribution
+    /// IKA network reads this from Sui to execute Bitcoin transactions
+    struct DistributionRecord has store, drop {
+        /// Distribution ID
+        distribution_id: u64,
+        /// Block height this distribution is for
+        block_height: u32,
+        /// Coinbase value (satoshis)
+        coinbase_value: u64,
+        /// Total recipients
+        recipient_count: u64,
+        /// Total amount distributed
         total_amount: u64,
-        /// Signers who have approved
-        approvals: vector<address>,
-        /// Created timestamp
-        created_at: u64,
-        /// Purpose/description
-        purpose: vector<u8>,
+        /// Timestamp when proposed
+        proposed_at: u64,
+        /// IKA execution status
+        executed: bool,
+        /// Execution timestamp (set by IKA callback)
+        executed_at: u64,
     }
 
     /// Recipient for Bitcoin payout
@@ -61,103 +59,99 @@ module p2pool_shares::m1n3_dwallet {
         bitcoin_address: vector<u8>,
         /// Amount in satoshis
         amount: u64,
-        /// M1N3 miner address (for tracking)
+        /// Miner's Sui address (for accountability)
         miner_address: address,
+        /// Share difficulty contribution
+        difficulty: u64,
     }
 
-    /// Events
+    /// ==================== EVENTS FOR IKA NETWORK ====================
+    /// IKA network listens to these events and automatically executes Bitcoin transactions
+
+    /// Emitted when dWallet is created
     struct DWalletCreated has copy, drop {
         dwallet_id: address,
         bitcoin_address: vector<u8>,
+        dwallet_cap_id: vector<u8>,
         network: vector<u8>,
-        threshold: u8,
-        total_participants: u8,
+        mining_registry_id: address,
         timestamp: u64,
     }
 
-    struct TransactionProposed has copy, drop {
+    /// Emitted when PPLNS distribution is proposed
+    /// IKA network reads this and automatically executes the Bitcoin transaction
+    struct PPLNSDistributionProposed has copy, drop {
         dwallet_id: address,
-        tx_id: address,
+        distribution_id: u64,
+        block_height: u32,
+        coinbase_value: u64,
         total_amount: u64,
         recipient_count: u64,
-        proposer: address,
+        /// Serialized recipient data for IKA to parse
+        /// Format: repeated (btc_addr_len | btc_addr | amount_u64 | sui_addr | difficulty_u64)
+        recipients_data: vector<u8>,
         timestamp: u64,
     }
 
-    struct TransactionSigned has copy, drop {
+    /// Emitted when IKA confirms execution
+    struct DistributionExecuted has copy, drop {
         dwallet_id: address,
-        tx_id: address,
-        signer: address,
-        approvals: u64,
-        threshold: u8,
-        timestamp: u64,
-    }
-
-    struct TransactionExecuted has copy, drop {
-        dwallet_id: address,
-        tx_id: address,
+        distribution_id: u64,
+        bitcoin_txid: vector<u8>,
         total_amount: u64,
-        recipient_count: u64,
         timestamp: u64,
     }
 
     /// Create a new shared dWallet for PPLNS pool
-    /// This creates a public dWallet that anyone can query but requires
-    /// threshold signatures to execute Bitcoin transactions
+    /// This dWallet's Bitcoin address will receive block coinbase rewards
     public entry fun create_shared_dwallet(
         bitcoin_address: vector<u8>,
         dwallet_cap_id: vector<u8>,
         network: vector<u8>,
-        threshold: u8,
-        authorized_signers: vector<address>,
+        mining_registry_id: ID,
         clock: &sui::clock::Clock,
         ctx: &mut TxContext
     ) {
-        let total_participants = (vector::length(&authorized_signers) as u8);
-
-        // Validate threshold
-        assert!(threshold > 0 && threshold <= total_participants, E_INVALID_THRESHOLD);
-
         let dwallet = SharedDWallet {
             id: object::new(ctx),
             bitcoin_address,
             dwallet_cap_id,
             network,
-            threshold,
-            total_participants,
-            authorized_signers,
-            pending_transactions: table::new(ctx),
-            total_transactions: 0,
+            mining_registry_id,
+            distributions: table::new(ctx),
+            distribution_count: 0,
             total_distributed: 0,
             created_at: sui::clock::timestamp_ms(clock),
         };
 
         let dwallet_addr = object::uid_to_address(&dwallet.id);
+        let registry_addr = object::id_to_address(&mining_registry_id);
 
+        // Emit event for IKA network to register this dWallet
         event::emit(DWalletCreated {
             dwallet_id: dwallet_addr,
             bitcoin_address,
+            dwallet_cap_id,
             network,
-            threshold,
-            total_participants,
+            mining_registry_id: registry_addr,
             timestamp: sui::clock::timestamp_ms(clock),
         });
 
-        // Share the dWallet - makes it accessible to everyone
+        // Share the dWallet - makes it publicly accessible
         transfer::share_object(dwallet);
     }
 
-    /// Propose a new Bitcoin transaction for PPLNS rewards
-    /// Anyone can propose, but execution requires threshold signatures
+    /// Propose PPLNS distribution for a found block
+    /// IKA network will automatically execute this based on Sui data
+    /// Anyone can propose, but IKA verifies against on-chain share window
     public entry fun propose_pplns_distribution(
         dwallet: &mut SharedDWallet,
+        block_height: u32,
+        coinbase_value: u64,
         recipients: vector<Recipient>,
-        purpose: vector<u8>,
         clock: &sui::clock::Clock,
         ctx: &mut TxContext
     ) {
-        let sender = tx_context::sender(ctx);
-
         // Calculate total amount
         let total_amount: u64 = 0;
         let i = 0;
@@ -168,138 +162,156 @@ module p2pool_shares::m1n3_dwallet {
             i = i + 1;
         };
 
-        // Create pending transaction
-        let tx_id = object::new(ctx);
-        let tx_id_inner = object::uid_to_inner(&tx_id);
-        let tx_id_addr = object::uid_to_address(&tx_id);
-
-        let pending_tx = PendingTransaction {
-            tx_id: tx_id_inner,
-            recipients,
+        // Create distribution record
+        let distribution_id = dwallet.distribution_count;
+        let record = DistributionRecord {
+            distribution_id,
+            block_height,
+            coinbase_value,
+            recipient_count: len,
             total_amount,
-            approvals: vector::empty<address>(),
-            created_at: sui::clock::timestamp_ms(clock),
-            purpose,
+            proposed_at: sui::clock::timestamp_ms(clock),
+            executed: false,
+            executed_at: 0,
         };
 
-        // Store pending transaction
-        table::add(&mut dwallet.pending_transactions, tx_id_inner, pending_tx);
+        // Store record
+        table::add(&mut dwallet.distributions, distribution_id, record);
+        dwallet.distribution_count = dwallet.distribution_count + 1;
 
-        event::emit(TransactionProposed {
+        // Serialize recipients for IKA
+        let recipients_data = serialize_recipients(&recipients);
+
+        // Emit event for IKA network to consume
+        // IKA will:
+        // 1. Read this event
+        // 2. Verify distribution matches share window on Sui
+        // 3. Automatically sign and broadcast Bitcoin transaction
+        // 4. Call mark_distribution_executed() after confirmation
+        event::emit(PPLNSDistributionProposed {
             dwallet_id: object::uid_to_address(&dwallet.id),
-            tx_id: tx_id_addr,
+            distribution_id,
+            block_height,
+            coinbase_value,
             total_amount,
             recipient_count: len,
-            proposer: sender,
+            recipients_data,
             timestamp: sui::clock::timestamp_ms(clock),
         });
-
-        // Clean up tx_id object
-        object::delete(tx_id);
     }
 
-    /// Sign a pending transaction (requires authorized signer)
-    public entry fun sign_transaction(
+    /// Called by IKA network after successfully executing Bitcoin transaction
+    /// This is the only "callback" - IKA confirms execution
+    public entry fun mark_distribution_executed(
         dwallet: &mut SharedDWallet,
-        tx_id: ID,
+        distribution_id: u64,
+        bitcoin_txid: vector<u8>,
         clock: &sui::clock::Clock,
-        ctx: &mut TxContext
+        _ctx: &mut TxContext
     ) {
-        let sender = tx_context::sender(ctx);
+        // Get distribution record
+        let record = table::borrow_mut(&mut dwallet.distributions, distribution_id);
 
-        // Verify sender is authorized signer
-        assert!(is_authorized_signer(dwallet, sender), E_NOT_AUTHORIZED);
+        // Mark as executed
+        record.executed = true;
+        record.executed_at = sui::clock::timestamp_ms(clock);
 
-        // Get pending transaction
-        let pending_tx = table::borrow_mut(&mut dwallet.pending_transactions, tx_id);
+        // Update total distributed
+        dwallet.total_distributed = dwallet.total_distributed + record.total_amount;
 
-        // Check if already signed
-        if (!vector::contains(&pending_tx.approvals, &sender)) {
-            vector::push_back(&mut pending_tx.approvals, sender);
-        };
-
-        let approval_count = vector::length(&pending_tx.approvals);
-
-        event::emit(TransactionSigned {
+        // Emit confirmation event
+        event::emit(DistributionExecuted {
             dwallet_id: object::uid_to_address(&dwallet.id),
-            tx_id: object::uid_to_address_inner(tx_id),
-            signer: sender,
-            approvals: approval_count,
-            threshold: dwallet.threshold,
+            distribution_id,
+            bitcoin_txid,
+            total_amount: record.total_amount,
             timestamp: sui::clock::timestamp_ms(clock),
         });
+    }
 
-        // If threshold reached, mark ready for execution
-        // In production, this would trigger IKA 2PC-MPC signing
-        if (approval_count >= (dwallet.threshold as u64)) {
-            // Transaction is ready for execution
-            // Note: Actual Bitcoin transaction signing happens off-chain via IKA
-            execute_transaction_internal(dwallet, tx_id, clock);
+    /// Helper: Serialize recipients for IKA network
+    /// Format: For each recipient: btc_addr_len(u8) | btc_addr | amount(u64) | sui_addr(32 bytes) | difficulty(u64)
+    fun serialize_recipients(recipients: &vector<Recipient>): vector<u8> {
+        let data = vector::empty<u8>();
+        let i = 0;
+        let len = vector::length(recipients);
+
+        while (i < len) {
+            let recipient = vector::borrow(recipients, i);
+
+            // Bitcoin address length (1 byte)
+            let btc_addr_len = (vector::length(&recipient.bitcoin_address) as u8);
+            vector::push_back(&mut data, btc_addr_len);
+
+            // Bitcoin address bytes
+            vector::append(&mut data, recipient.bitcoin_address);
+
+            // Amount (8 bytes, little-endian u64)
+            append_u64(&mut data, recipient.amount);
+
+            // Miner Sui address (32 bytes)
+            // Note: In production, properly serialize the address
+            // For now, placeholder
+            let j = 0;
+            while (j < 32) {
+                vector::push_back(&mut data, 0);
+                j = j + 1;
+            };
+
+            // Difficulty (8 bytes, little-endian u64)
+            append_u64(&mut data, recipient.difficulty);
+
+            i = i + 1;
         };
+
+        data
     }
 
-    /// Internal: Execute transaction after threshold is met
-    fun execute_transaction_internal(
-        dwallet: &mut SharedDWallet,
-        tx_id: ID,
-        clock: &sui::clock::Clock
-    ) {
-        // Remove from pending
-        let pending_tx = table::remove(&mut dwallet.pending_transactions, tx_id);
-
-        // Update stats
-        dwallet.total_transactions = dwallet.total_transactions + 1;
-        dwallet.total_distributed = dwallet.total_distributed + pending_tx.total_amount;
-
-        event::emit(TransactionExecuted {
-            dwallet_id: object::uid_to_address(&dwallet.id),
-            tx_id: object::uid_to_address_inner(tx_id),
-            total_amount: pending_tx.total_amount,
-            recipient_count: vector::length(&pending_tx.recipients),
-            timestamp: sui::clock::timestamp_ms(clock),
-        });
-
-        // Note: Actual Bitcoin transaction is signed and broadcast by IKA signers
-        // listening to TransactionExecuted events
-    }
-
-    /// Helper: Check if address is authorized signer
-    fun is_authorized_signer(dwallet: &SharedDWallet, addr: address): bool {
-        vector::contains(&dwallet.authorized_signers, &addr)
-    }
-
-    /// Helper: Convert object ID to address for events
-    fun object::uid_to_address_inner(id: ID): address {
-        // This is a placeholder - in production, use proper ID to address conversion
-        @0x0
+    /// Helper: Append u64 as little-endian bytes
+    fun append_u64(data: &mut vector<u8>, value: u64) {
+        vector::push_back(data, ((value >> 0) & 0xFF as u8));
+        vector::push_back(data, ((value >> 8) & 0xFF as u8));
+        vector::push_back(data, ((value >> 16) & 0xFF as u8));
+        vector::push_back(data, ((value >> 24) & 0xFF as u8));
+        vector::push_back(data, ((value >> 32) & 0xFF as u8));
+        vector::push_back(data, ((value >> 40) & 0xFF as u8));
+        vector::push_back(data, ((value >> 48) & 0xFF as u8));
+        vector::push_back(data, ((value >> 56) & 0xFF as u8));
     }
 
     /// Get dWallet info
-    public fun get_dwallet_info(dwallet: &SharedDWallet): (vector<u8>, u8, u8, u64, u64) {
+    public fun get_dwallet_info(dwallet: &SharedDWallet): (vector<u8>, u64, u64) {
         (
             dwallet.bitcoin_address,
-            dwallet.threshold,
-            dwallet.total_participants,
-            dwallet.total_transactions,
+            dwallet.distribution_count,
             dwallet.total_distributed
         )
     }
 
-    /// Get pending transaction count
-    public fun get_pending_count(dwallet: &SharedDWallet): u64 {
-        table::length(&dwallet.pending_transactions)
+    /// Get distribution record
+    public fun get_distribution(dwallet: &SharedDWallet, distribution_id: u64): (u32, u64, u64, bool, u64) {
+        let record = table::borrow(&dwallet.distributions, distribution_id);
+        (
+            record.block_height,
+            record.coinbase_value,
+            record.total_amount,
+            record.executed,
+            record.executed_at
+        )
     }
 
     /// Create recipient entry
     public fun create_recipient(
         bitcoin_address: vector<u8>,
         amount: u64,
-        miner_address: address
+        miner_address: address,
+        difficulty: u64
     ): Recipient {
         Recipient {
             bitcoin_address,
             amount,
             miner_address,
+            difficulty,
         }
     }
 }
