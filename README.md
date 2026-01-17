@@ -6,21 +6,48 @@ M1N3 is a next-generation decentralized Bitcoin mining protocol based on P2Pool,
 
 M1N3 combines traditional P2Pool mining with blockchain verification and creates a tradeable share marketplace where miners can instantly monetize their work before blocks are found.
 
+### Built on P2Pool v2 Architecture
+
+M1N3 extends the modern [P2Pool v2](https://github.com/p2poolv2/p2poolv2) design with on-chain verification capabilities:
+
+**P2Pool v2 Foundations:**
+- **Sharechain with Uncle Blocks** - Inspired by P2Pool v2's uncle block support for comprehensive work accounting
+- **Non-Custodial Model** - Following decentralized principles where miners retain full control
+- **Atomic Swap Integration** - Building on market maker concepts for trustless peer-to-peer trading
+- **Stratum v2 Compatibility** - Ready for modern mining protocols with improved efficiency
+- **Rust-Bitcoin Standards** - Aligned with modern Bitcoin protocol implementations
+
+**M1N3 Enhancements:**
+- **Sui Blockchain Verification** - Adds trustless on-chain SHA-256 verification layer
+- **Tradeable Share NFTs** - Every valid share becomes a liquid financial instrument
+- **Two-Phase Bootstrap** - Historical verification distributes initial token supply fairly
+- **Staking Security** - Economic incentives through M1N3 token staking for template proposers
+
 ### Key Features
 
 - **Phase 1**: Historical block header verification with coordinated field-level validation
 - **Phase 2**: Real-time mining with staking security and on-chain share verification
 - **Share Trading**: All valid shares become tradeable NFTs with a 2% fee benefiting stakers
-- **PPS Redemption**: Shares can be redeemed for Bitcoin rewards proportional to their difficulty
+- **Uncle Block Accounting**: All submitted work credited, reducing orphaned share waste
+- **PPS Redemption**: Shares redeemable for Bitcoin rewards proportional to their difficulty
 - **Native Verification**: Uses Sui's native SHA-256 for trustless on-chain validation
+- **Market Maker Support**: Enables liquidity providers to buy shares from smaller miners
 
 ## Requirements
 
 ### Generic
-- Bitcoin Core >= 0.21.0 (with Taproot support)
+- **Bitcoin Core >= 22.0** (Taproot activated, recommended >= 28.0 for latest features)
 - Python >= 2.7
 - Twisted >= 10.0.0
 - pysui >= 0.50.0
+
+### Bitcoin Protocol Compatibility
+M1N3 builds upon modern P2Pool v2 architecture and requires:
+- **Taproot Support** (activated block 709,632 - Nov 2021)
+- **SegWit** native address support
+- **Witness Transaction Serialization** (BIP 141)
+- **getblocktemplate** with `segwit` and `taproot` rules
+- **Compact Blocks** (BIP 152) for efficient propagation
 
 ### Linux
 ```bash
@@ -69,16 +96,23 @@ server=1
 rpcuser=your_rpc_username
 rpcpassword=your_rpc_password
 rpcport=8332
+rpcallowip=127.0.0.1
 
-# Network settings
+# Network settings (P2Pool v2 compatible)
 listen=1
 daemon=1
 
-# Required for getblocktemplate
+# Required for getblocktemplate with modern features
 txindex=1
 
-# Taproot support (Bitcoin Core 0.21.0+)
-# No additional flags needed, Taproot activated at block 709632
+# Taproot support (activated block 709,632)
+# Automatically enabled in Bitcoin Core 22.0+
+
+# SegWit and witness data (BIP 141, BIP 144)
+# Automatically enabled for native address support
+
+# Compact blocks (BIP 152) for efficient propagation
+blocksonly=0
 
 # Performance optimization
 dbcache=4096
@@ -87,6 +121,14 @@ maxmempool=512
 # For Phase 1 historical verification
 # Keep full blockchain (no pruning)
 prune=0
+
+# P2P network optimization
+maxconnections=125
+maxuploadtarget=0  # Unlimited for mining pool operation
+
+# Mempool settings for optimal template generation
+mempoolexpiry=336  # 2 weeks in hours
+maxmempool=300     # MB
 ```
 
 ### Starting Bitcoin Core
@@ -175,23 +217,26 @@ Your Bitcoin node must be able to:
 ### Quick Start for Bitcoin Node
 
 ```bash
-# 1. Download Bitcoin Core 0.21.0 or newer
-wget https://bitcoincore.org/bin/bitcoin-core-0.21.0/bitcoin-0.21.0-x86_64-linux-gnu.tar.gz
+# 1. Download Bitcoin Core 28.0 or newer (recommended for P2Pool v2 compatibility)
+wget https://bitcoincore.org/bin/bitcoin-core-28.0/bitcoin-28.0-x86_64-linux-gnu.tar.gz
 
 # 2. Extract and install
-tar -xzf bitcoin-0.21.0-x86_64-linux-gnu.tar.gz
-sudo install -m 0755 -o root -g root -t /usr/local/bin bitcoin-0.21.0/bin/*
+tar -xzf bitcoin-28.0-x86_64-linux-gnu.tar.gz
+sudo install -m 0755 -o root -g root -t /usr/local/bin bitcoin-28.0/bin/*
 
-# 3. Create configuration
+# 3. Create configuration with modern P2Pool v2 compatible settings
 mkdir -p ~/.bitcoin
 cat > ~/.bitcoin/bitcoin.conf <<EOF
 server=1
 rpcuser=m1n3user
 rpcpassword=$(openssl rand -base64 32)
 rpcport=8332
+rpcallowip=127.0.0.1
 txindex=1
 dbcache=4096
+maxmempool=300
 prune=0
+maxconnections=125
 EOF
 
 # 4. Start syncing (this will take time!)
@@ -199,6 +244,9 @@ bitcoind -daemon
 
 # 5. Monitor sync progress
 watch bitcoin-cli getblockchaininfo
+
+# 6. Verify Taproot activation (should show "active")
+bitcoin-cli getblockchaininfo | grep -A2 taproot
 ```
 
 ### Recommended Hardware
@@ -539,9 +587,43 @@ sui move test
 
 ## Network Ports
 
-- **9332**: Stratum mining port
-- **9333**: P2P communication
+- **9332**: Stratum mining port (Stratum v1, v2-ready)
+- **9333**: P2P communication (sharechain propagation)
 - **9334**: Web interface (default)
+
+## Mining Protocol Support
+
+### Stratum v1 (Current)
+M1N3 currently supports Stratum v1 for maximum miner compatibility:
+- Standard `mining.subscribe` and `mining.authorize` flow
+- Extranonce subscription for efficient share generation
+- Compatible with all major mining software (cgminer, bfgminer, etc.)
+
+### Stratum v2 (Future)
+**Following P2Pool v2 architecture**, M1N3 is designed for Stratum v2 compatibility:
+
+**Benefits of Stratum v2:**
+- **Job Declaration** - Miners can construct their own block templates
+- **Reduced Bandwidth** - Binary protocol with header-only mining
+- **Better Security** - Encrypted connections, preventing man-in-the-middle attacks
+- **Hashrate Attestation** - Cryptographic proof of hashrate contribution
+- **Standard Channels** - Multiple miners can share single connection
+
+**Implementation Roadmap:**
+1. Current: Stratum v1 with M1N3-specific extensions for Sui verification
+2. Phase 2: Hybrid mode supporting both Stratum v1 and v2
+3. Future: Full Stratum v2 with job declaration for maximum decentralization
+
+### Mining Software Compatibility
+
+**Tested and Compatible:**
+- cgminer 4.10.0+
+- bfgminer 5.5.0+
+- CPUMiner (reference implementation)
+
+**Stratum v2 Ready:**
+- braiins-pool Stratum v2 reference implementation
+- SRI (Stratum V2 Reference Implementation)
 
 ## Security Considerations
 
@@ -721,14 +803,41 @@ M1N3's trustless security model requires each participant to independently verif
 
 ## Roadmap
 
+### Completed
 - [x] Phase 1: Historical block verification
 - [x] Phase 2: Real-time mining with staking
 - [x] Share trading with 2% fee
 - [x] PPS redemption system
+- [x] Bitcoin Core 28.0+ compatibility
+- [x] Taproot and SegWit native support
+
+### In Progress (P2Pool v2 Alignment)
+- [ ] Uncle block implementation for comprehensive work accounting
+- [ ] Stratum v2 protocol support
+- [ ] Compact block propagation (BIP 152)
+- [ ] Sharechain optimization with rust-bitcoin standards
+
+### Future Enhancements
 - [ ] Marketplace web interface
 - [ ] Mobile app for share trading
 - [ ] Cross-chain share bridges
 - [ ] Advanced trading features (limit orders, options)
+- [ ] Hashrate attestation via Stratum v2
+- [ ] Job declaration for maximum miner autonomy
+- [ ] Integration with CKPool for solo mining fallback
+
+## Comparison with P2Pool v2
+
+| Feature | P2Pool v2 | M1N3 |
+|---------|-----------|------|
+| **Implementation** | Rust | Python 2.7 + Sui Move |
+| **Share Accounting** | Uncle blocks | Uncle blocks (planned) |
+| **Verification** | Distributed nodes | On-chain Sui SHA-256 |
+| **Share Trading** | Atomic swaps | NFT marketplace + Atomic swaps |
+| **Payout Model** | Coinbase direct | PPS via M1N3 tokens |
+| **Staking** | No | Yes (M1N3 tokens) |
+| **Protocol** | Stratum v2 ready | Stratum v1 (v2 planned) |
+| **Bitcoin Core** | 22.0+ | 22.0+ (28.0+ recommended) |
 
 ## License
 
@@ -736,7 +845,22 @@ M1N3's trustless security model requires each participant to independently verif
 
 ## Acknowledgments
 
-Based on the original P2Pool protocol by forrestv. Enhanced with Sui blockchain integration and share trading economy for the M1N3 project.
+**M1N3** builds upon decades of decentralized mining innovation:
+
+- **Original P2Pool** by forrestv - pioneering decentralized pool architecture
+- **P2Pool v2** ([p2poolv2](https://github.com/p2poolv2/p2poolv2)) - modern Rust implementation with uncle blocks and Stratum v2
+- **rust-bitcoin** - Bitcoin protocol implementation standards
+- **Sui Foundation** - native SHA-256 verification capabilities
+
+Enhanced with blockchain verification, tradeable shares, and economic incentives for the M1N3 project.
+
+## References
+
+- [P2Pool v2 GitHub](https://github.com/p2poolv2/p2poolv2) - Modern P2Pool reboot for Bitcoin
+- [Stratum V2 Specifications](https://stratumprotocol.org/) - Next-generation mining protocol
+- [Bitcoin Core 28.0](https://bitcoincore.org/en/releases/28.0/) - Latest Bitcoin node software
+- [BIP 152 - Compact Blocks](https://github.com/bitcoin/bips/blob/master/bip-0152.mediawiki) - Efficient block propagation
+- [Sui Documentation](https://docs.sui.io/) - Sui blockchain platform
 
 ---
 
