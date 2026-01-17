@@ -10,7 +10,7 @@ M1N3 combines traditional P2Pool mining with blockchain verification and creates
 
 M1N3 extends the modern [P2Pool v2](https://github.com/p2poolv2/p2poolv2) design with on-chain verification capabilities:
 
-**P2Pool v2 Foundations:**
+**P2Pool Foundations:**
 - **Sharechain with Uncle Blocks** - Inspired by P2Pool v2's uncle block support for comprehensive work accounting
 - **Non-Custodial Model** - Following decentralized principles where miners retain full control
 - **Atomic Swap Integration** - Building on market maker concepts for trustless peer-to-peer trading
@@ -27,7 +27,7 @@ M1N3 extends the modern [P2Pool v2](https://github.com/p2poolv2/p2poolv2) design
 
 - **Phase 1**: Historical block header verification with coordinated field-level validation
 - **Phase 2**: Real-time mining with staking security and on-chain share verification
-- **Share Trading**: All valid shares become tradeable NFTs with a 2% fee benefiting stakers
+- **Share Trading**: All valid shares become a tradeable SUI object.
 - **Uncle Block Accounting**: All submitted work credited, reducing orphaned share waste
 - **PPS Redemption**: Shares redeemable for Bitcoin rewards proportional to their difficulty
 - **Native Verification**: Uses Sui's native SHA-256 for trustless on-chain validation
