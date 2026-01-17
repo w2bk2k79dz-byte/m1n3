@@ -34,6 +34,192 @@ pip install pysui
 3. Install [Zope.Interface](http://pypi.python.org/pypi/zope.interface/)
 4. Install pysui: `pip install pysui`
 
+## Bitcoin Full Node Requirement
+
+**CRITICAL: M1N3 requires a fully synced Bitcoin Core node running locally.**
+
+### Why Full Node is Required
+
+M1N3's entire architecture depends on accessing complete Bitcoin blockchain data:
+
+1. **Phase 1 - Historical Verification**:
+   - Retrieves all historical block headers from Bitcoin Core
+   - Fetches complete block data (version, prev_hash, merkle_root, timestamp, bits, nonce)
+   - Reads coinbase transaction values for reward calculation
+   - Requires complete blockchain history from genesis to current height
+
+2. **Phase 2 - Real-Time Mining**:
+   - Requests block templates via `getblocktemplate` RPC
+   - Monitors mempool for transaction selection
+   - Submits found blocks to Bitcoin network
+   - Validates share difficulty against network target
+
+3. **On-Chain Registration**:
+   - Block headers registered on Sui are sourced from your Bitcoin node
+   - Field verification data comes directly from block bytes
+   - Ensures trustless verification through independent node validation
+
+### Bitcoin Core Configuration
+
+Create or edit `~/.bitcoin/bitcoin.conf`:
+
+```conf
+# RPC server settings (required)
+server=1
+rpcuser=your_rpc_username
+rpcpassword=your_rpc_password
+rpcport=8332
+
+# Network settings
+listen=1
+daemon=1
+
+# Required for getblocktemplate
+txindex=1
+
+# Taproot support (Bitcoin Core 0.21.0+)
+# No additional flags needed, Taproot activated at block 709632
+
+# Performance optimization
+dbcache=4096
+maxmempool=512
+
+# For Phase 1 historical verification
+# Keep full blockchain (no pruning)
+prune=0
+```
+
+### Starting Bitcoin Core
+
+```bash
+# Start Bitcoin daemon
+bitcoind -daemon
+
+# Wait for full synchronization (may take several days)
+bitcoin-cli getblockchaininfo
+
+# Verify sync status
+# Look for: "blocks" == "headers" and "initialblockdownload" == false
+```
+
+### Disk Space Requirements
+
+- **Full Node**: ~500-600 GB for complete blockchain (as of 2026)
+- **txindex enabled**: Additional ~50-100 GB for transaction index
+- **Recommended**: 1 TB SSD for optimal performance
+
+### RPC Access
+
+M1N3 connects to Bitcoin Core via JSON-RPC. Required RPC methods:
+
+**Phase 1 - Historical Verification**:
+- `getblockchaininfo` - Get current blockchain state
+- `getblockhash <height>` - Get block hash at specific height
+- `getblock <hash> 0` - Get raw block data (hex)
+- `getblock <hash> 1` - Get block details (JSON)
+- `getrawtransaction` - Get coinbase transaction for subsidy
+
+**Phase 2 - Real-Time Mining**:
+- `getblocktemplate` - Get block template for mining
+- `submitblock` - Submit found block to network
+- `getpeerinfo` - Monitor network connectivity
+- `getmininginfo` - Get mining difficulty and network hashrate
+
+### Network Connectivity
+
+Your Bitcoin node must be able to:
+- Connect to Bitcoin P2P network (port 8333)
+- Accept RPC connections from P2Pool (port 8332)
+- Broadcast found blocks to the network
+
+### Verification Process
+
+**How Block Registration Works:**
+
+1. **P2Pool queries Bitcoin Core**:
+   ```python
+   # Get block at specific height
+   block_hash = bitcoind.rpc_getblockhash(height)
+   block_data = bitcoind.rpc_getblock(block_hash, 0)  # Raw hex
+   ```
+
+2. **Parse block header** (80 bytes):
+   ```
+   Bytes 0-3:   Version (4 bytes)
+   Bytes 4-35:  Previous block hash (32 bytes)
+   Bytes 36-67: Merkle root (32 bytes)
+   Bytes 68-71: Timestamp (4 bytes)
+   Bytes 72-75: Difficulty bits (4 bytes)
+   Bytes 76-79: Nonce (4 bytes)
+   ```
+
+3. **Register on Sui blockchain**:
+   ```move
+   public entry fun register_block(
+       registry: &mut BlockRegistry,
+       height: u32,
+       header_data: vector<u8>,  // 80 bytes from Bitcoin Core
+       subsidy: u64,             // From coinbase transaction
+       ...
+   )
+   ```
+
+4. **Verification session created**:
+   - Other nodes query their own Bitcoin Core instances
+   - Compare field data independently
+   - Submit matching data on-chain
+   - SHA-256 verification ensures correctness
+
+**This creates trustless verification** - each node independently validates against their own full node, making collusion impossible.
+
+### Quick Start for Bitcoin Node
+
+```bash
+# 1. Download Bitcoin Core 0.21.0 or newer
+wget https://bitcoincore.org/bin/bitcoin-core-0.21.0/bitcoin-0.21.0-x86_64-linux-gnu.tar.gz
+
+# 2. Extract and install
+tar -xzf bitcoin-0.21.0-x86_64-linux-gnu.tar.gz
+sudo install -m 0755 -o root -g root -t /usr/local/bin bitcoin-0.21.0/bin/*
+
+# 3. Create configuration
+mkdir -p ~/.bitcoin
+cat > ~/.bitcoin/bitcoin.conf <<EOF
+server=1
+rpcuser=m1n3user
+rpcpassword=$(openssl rand -base64 32)
+rpcport=8332
+txindex=1
+dbcache=4096
+prune=0
+EOF
+
+# 4. Start syncing (this will take time!)
+bitcoind -daemon
+
+# 5. Monitor sync progress
+watch bitcoin-cli getblockchaininfo
+```
+
+### Recommended Hardware
+
+For optimal M1N3 operation:
+
+- **CPU**: 4+ cores (8+ recommended)
+- **RAM**: 8 GB minimum (16 GB recommended)
+- **Storage**: 1 TB SSD (NVMe preferred)
+- **Network**: 100 Mbps+ with unlimited bandwidth
+- **Uptime**: 24/7 operation recommended for Phase 2 mining
+
+### Without Full Node
+
+**M1N3 cannot operate without a local Bitcoin full node.** Alternative configurations:
+
+- ❌ **SPV/Light clients**: Insufficient - cannot provide full block data
+- ❌ **Block explorers**: Centralized - defeats trustless verification
+- ❌ **Remote RPC**: Latency issues and trust assumptions
+- ✅ **Local full node**: Required for trustless operation
+
 ## Architecture
 
 ### Phase 1: Historical Verification
@@ -80,10 +266,24 @@ Decentralized mining with staking security:
 
 ## Running M1N3
 
+### Prerequisites
+
+Before running M1N3, ensure:
+1. ✅ Bitcoin Core is fully synced (check with `bitcoin-cli getblockchaininfo`)
+2. ✅ Bitcoin RPC is accessible (test with `bitcoin-cli getblockcount`)
+3. ✅ Sui wallet configured with funded account
+4. ✅ M1N3 smart contracts deployed on Sui
+
 ### Phase 1: Historical Verification
+
+**Verify all historical Bitcoin blocks and earn M1N3 tokens:**
 
 ```bash
 python run_p2pool.py \
+  --bitcoind-address 127.0.0.1 \
+  --bitcoind-rpc-port 8332 \
+  --bitcoind-rpc-username your_rpc_username \
+  --bitcoind-rpc-password your_rpc_password \
   --m1n3-enable \
   --m1n3-package-id <SUI_PACKAGE_ID> \
   --m1n3-registry-id <BLOCK_REGISTRY_ID> \
@@ -93,11 +293,42 @@ python run_p2pool.py \
   --m1n3-auto-verify
 ```
 
+**What happens:**
+1. P2Pool fetches blocks 0-100000 from your Bitcoin Core node
+2. Registers block headers on Sui blockchain
+3. Participates in field verification with other nodes
+4. Earns M1N3 tokens for correct field submissions
+5. Dynamically adjusts verification granularity based on network participation
+
+**Monitoring Progress:**
+```bash
+# View M1N3 stats
+curl http://localhost:9334/m1n3_stats
+
+# Check Bitcoin node sync
+bitcoin-cli getblockchaininfo
+
+# View verification sessions
+tail -f p2pool.log | grep M1N3
+```
+
 ### Phase 2: Real-Time Mining
 
+**Prerequisites for Phase 2:**
+- Phase 1 completed (historical blocks verified)
+- M1N3 tokens earned from Phase 1
+- Bitcoin node fully synced to current height
+
 #### As Staker/Template Proposer
+
+**Stake M1N3 to propose block templates and earn fees:**
+
 ```bash
 python run_p2pool.py \
+  --bitcoind-address 127.0.0.1 \
+  --bitcoind-rpc-port 8332 \
+  --bitcoind-rpc-username your_rpc_username \
+  --bitcoind-rpc-password your_rpc_password \
   --m1n3-enable \
   --m1n3-mining-mode \
   --m1n3-package-id <SUI_PACKAGE_ID> \
@@ -106,16 +337,45 @@ python run_p2pool.py \
   --m1n3-stake-amount 100000
 ```
 
+**Proposer responsibilities:**
+- Fetch block templates from Bitcoin Core via `getblocktemplate`
+- Register templates on Sui (10-minute validity)
+- Earn 5% of all shares mined against your templates
+- Earn 2% of share trading fees
+
 #### As Miner
+
+**Mine shares without staking:**
+
 ```bash
 python run_p2pool.py \
+  --bitcoind-address 127.0.0.1 \
+  --bitcoind-rpc-port 8332 \
+  --bitcoind-rpc-username your_rpc_username \
+  --bitcoind-rpc-password your_rpc_password \
   --m1n3-enable \
   --m1n3-mining-mode \
   --m1n3-package-id <SUI_PACKAGE_ID> \
   --m1n3-mining-registry-id <MINING_REGISTRY_ID>
 ```
 
-Then connect your mining software to `127.0.0.1:9332`
+Then connect your mining software to `127.0.0.1:9332`:
+
+```bash
+# Example with cgminer
+cgminer -o http://127.0.0.1:9332 -u username -p password
+
+# Example with bfgminer
+bfgminer -o http://127.0.0.1:9332 -u username -p password
+```
+
+**Miner flow:**
+1. P2Pool fetches active templates from Sui
+2. Your mining hardware finds shares
+3. Shares verified on-chain against templates
+4. Valid shares minted as tradeable NFTs to your address
+5. Earn 95% of share reward immediately
+6. Option to sell shares or hold for PPS redemption
 
 ## Share Trading Guide
 
@@ -299,6 +559,128 @@ sui move test
 - 2% fee prevents wash trading
 - Atomic swaps for trustless trading
 
+## Troubleshooting
+
+### Bitcoin Node Issues
+
+**"Connection refused" or "Could not connect to Bitcoin RPC"**
+```bash
+# Check if bitcoind is running
+bitcoin-cli getblockchaininfo
+
+# If not running, start it
+bitcoind -daemon
+
+# Verify RPC credentials match bitcoin.conf
+cat ~/.bitcoin/bitcoin.conf | grep rpc
+```
+
+**"Block not found" errors during Phase 1**
+```bash
+# Verify node is fully synced
+bitcoin-cli getblockchaininfo
+
+# Check specific block exists
+bitcoin-cli getblockhash <height>
+
+# If pruning was enabled, you'll need to re-sync without pruning
+# Stop bitcoind, remove blockchain, and restart with prune=0
+```
+
+**"Method not found: getblocktemplate"**
+```bash
+# Ensure txindex is enabled in bitcoin.conf
+grep txindex ~/.bitcoin/bitcoin.conf
+
+# If missing, add it and reindex
+bitcoind -reindex -txindex
+```
+
+**Slow block retrieval**
+```bash
+# Increase dbcache for better performance
+# Add to bitcoin.conf:
+dbcache=4096
+
+# Restart bitcoind
+bitcoin-cli stop
+bitcoind -daemon
+```
+
+**"Insufficient funds" for transactions**
+```bash
+# This is about Bitcoin Core wallet, not M1N3
+# M1N3 doesn't require Bitcoin Core wallet funding
+# Only need RPC access for block data
+```
+
+### Sui Integration Issues
+
+**"Transaction failed: Insufficient gas"**
+```bash
+# Check Sui wallet balance
+sui client gas
+
+# Request testnet SUI if needed
+curl --location --request POST 'https://faucet.testnet.sui.io/gas' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{"FixedAmountRequest":{"recipient":"<YOUR_SUI_ADDRESS>"}}'
+```
+
+**"Object not found" errors**
+```bash
+# Verify contract IDs are correct
+sui client object <PACKAGE_ID>
+sui client object <REGISTRY_ID>
+
+# Ensure contracts are deployed on correct network (testnet/mainnet)
+sui client active-env
+```
+
+**"Share verification failed"**
+```bash
+# Ensure your Bitcoin node data matches network consensus
+# Different Bitcoin node = different block data = verification failure
+
+# Verify your node is on correct chain
+bitcoin-cli getblockchaininfo | grep chain
+
+# Should show "main" for mainnet, not "test" or "regtest"
+```
+
+### Performance Issues
+
+**High CPU usage**
+```bash
+# Bitcoin Core indexing - normal during initial sync
+# Reduce after sync complete
+
+# If persistent, check dbcache setting
+# Lower value reduces RAM but increases CPU
+```
+
+**High disk I/O**
+```bash
+# Move Bitcoin data directory to SSD
+# Stop bitcoind
+bitcoin-cli stop
+
+# Move data
+mv ~/.bitcoin /path/to/ssd/.bitcoin
+ln -s /path/to/ssd/.bitcoin ~/.bitcoin
+
+# Restart
+bitcoind -daemon
+```
+
+**Network bandwidth saturation**
+```bash
+# Limit Bitcoin Core connections
+# Add to bitcoin.conf:
+maxconnections=16
+maxuploadtarget=5000  # 5GB/day upload limit
+```
+
 ## FAQ
 
 ### How do shares become valuable?
@@ -318,6 +700,18 @@ Yes! Only template proposers need to stake. Regular miners just find shares.
 
 ### When can I redeem shares?
 Only after the block is found and redemptions are enabled for that height.
+
+### Can I use a pruned Bitcoin node?
+No. Pruned nodes discard old block data, which prevents Phase 1 historical verification. You must run a full archival node with `prune=0`.
+
+### Do I need to run Bitcoin Core 24/7?
+For Phase 1, you can run intermittently during verification. For Phase 2 real-time mining, 24/7 uptime is strongly recommended to propose templates and mine shares continuously.
+
+### What if my Bitcoin node is still syncing?
+You can start Phase 1 verification for already-synced heights. For example, if synced to block 50000, set `--m1n3-end-height 50000`. Continue verification as more blocks sync.
+
+### Why can't I use a block explorer API instead of Bitcoin Core?
+M1N3's trustless security model requires each participant to independently verify block data from their own node. Using a block explorer would introduce trust assumptions and centralization.
 
 ## Support & Community
 
