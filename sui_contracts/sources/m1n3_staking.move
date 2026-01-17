@@ -52,6 +52,10 @@ module p2pool_shares::m1n3_staking {
         stakes: Table<address, ID>,
         /// Active template proposers
         active_proposers: Table<address, bool>,
+        /// Collected fees from share trading (to be distributed)
+        fee_pool: Balance<M1N3>,
+        /// Total fees collected
+        total_fees_collected: u64,
         /// Total staked M1N3
         total_staked: u64,
         /// Total active proposers
@@ -90,6 +94,8 @@ module p2pool_shares::m1n3_staking {
             id: object::new(ctx),
             stakes: table::new(ctx),
             active_proposers: table::new(ctx),
+            fee_pool: balance::zero<M1N3>(),
+            total_fees_collected: 0,
             total_staked: 0,
             total_proposers: 0,
             min_stake: MIN_STAKE,
@@ -266,6 +272,39 @@ module p2pool_shares::m1n3_staking {
     /// Add proposer rewards
     public(friend) fun add_proposer_reward(position: &mut StakePosition, amount: u64) {
         position.proposer_rewards = position.proposer_rewards + amount;
+    }
+
+    /// Distribute share trading fee to all stakers (called by mining module)
+    public(friend) fun distribute_fee_to_stakers(
+        registry: &mut StakingRegistry,
+        fee: Coin<M1N3>
+    ) {
+        let fee_amount = coin::value(&fee);
+        coin::put(&mut registry.fee_pool, fee);
+        registry.total_fees_collected = registry.total_fees_collected + fee_amount;
+    }
+
+    /// Claim share of collected fees (proportional to stake)
+    public entry fun claim_fees(
+        registry: &mut StakingRegistry,
+        position: &StakePosition,
+        ctx: &mut TxContext
+    ) {
+        let sender = tx_context::sender(ctx);
+        assert!(position.staker == sender, E_NOT_STAKED);
+
+        // Calculate proportional share of fee pool
+        let total_fees_available = balance::value(&registry.fee_pool);
+        if (total_fees_available > 0 && registry.total_staked > 0) {
+            let stake_share = (position.amount * 1000000) / registry.total_staked; // Fixed point math
+            let reward_amount = (total_fees_available * stake_share) / 1000000;
+
+            if (reward_amount > 0) {
+                let reward_balance = balance::split(&mut registry.fee_pool, reward_amount);
+                let reward_coin = coin::from_balance(reward_balance, ctx);
+                transfer::public_transfer(reward_coin, sender);
+            };
+        };
     }
 
     /// Check if address is active proposer

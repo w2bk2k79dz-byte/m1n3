@@ -18,12 +18,18 @@ module p2pool_shares::m1n3_mining {
     const E_DUPLICATE_SHARE: u64 = 4;
     const E_SHARE_DIFFICULTY_TOO_LOW: u64 = 5;
     const E_TEMPLATE_NOT_FOUND: u64 = 6;
+    const E_BLOCK_NOT_FOUND: u64 = 7;
+    const E_REDEMPTION_NOT_ALLOWED: u64 = 8;
+    const E_INVALID_SHARE_OWNERSHIP: u64 = 9;
 
     /// Template validity period (10 minutes in milliseconds)
     const TEMPLATE_VALIDITY_MS: u64 = 10 * 60 * 1000;
 
     /// Proposer fee (5% of share reward)
     const PROPOSER_FEE_PERCENT: u64 = 5;
+
+    /// Share transfer fee (2% goes to M1N3 stakers)
+    const SHARE_TRANSFER_FEE_PERCENT: u64 = 2;
 
     /// Block template proposed by staked node
     struct MiningTemplate has key, store {
@@ -56,7 +62,7 @@ module p2pool_shares::m1n3_mining {
         valid_shares: u64,
     }
 
-    /// Mining share submitted by miner
+    /// Mining share submitted by miner (tradeable NFT)
     struct MiningShare has key, store {
         id: UID,
         /// Share hash
@@ -71,8 +77,10 @@ module p2pool_shares::m1n3_mining {
         nonce: u32,
         /// Extra nonce
         extra_nonce: u64,
-        /// Miner address
+        /// Original miner address
         miner: address,
+        /// Current owner
+        owner: address,
         /// Difficulty met
         difficulty: u64,
         /// Submitted at
@@ -81,6 +89,29 @@ module p2pool_shares::m1n3_mining {
         is_valid: bool,
         /// Found block (met Bitcoin network difficulty)
         found_block: bool,
+        /// Has been redeemed for Bitcoin rewards
+        redeemed: bool,
+    }
+
+    /// Block reward pool for PPS redemption
+    struct BlockRewardPool has key, store {
+        id: UID,
+        /// Block height
+        height: u32,
+        /// Block header hash
+        block_hash: vector<u8>,
+        /// Coinbase value in satoshis
+        coinbase_value: u64,
+        /// Total difficulty of all shares
+        total_difficulty: u64,
+        /// Total shares submitted
+        total_shares: u64,
+        /// Block found timestamp
+        found_at: u64,
+        /// Redemptions allowed
+        redemption_enabled: bool,
+        /// Shares redeemed count
+        redeemed_shares: u64,
     }
 
     /// Mining registry
@@ -90,6 +121,8 @@ module p2pool_shares::m1n3_mining {
         active_templates: Table<u32, ID>,
         /// Share hashes (to prevent duplicates)
         submitted_shares: Table<vector<u8>, bool>,
+        /// Block reward pools (height => pool ID)
+        reward_pools: Table<u32, ID>,
         /// Total templates proposed
         total_templates: u64,
         /// Total shares submitted
@@ -98,6 +131,10 @@ module p2pool_shares::m1n3_mining {
         total_valid_shares: u64,
         /// Total blocks found
         total_blocks_found: u64,
+        /// Total shares traded
+        total_shares_traded: u64,
+        /// Total fees collected (in M1N3)
+        total_fees_collected: u64,
         /// Mode: false = historical verification, true = real-time mining
         mining_mode_active: bool,
     }
@@ -133,16 +170,45 @@ module p2pool_shares::m1n3_mining {
         message: vector<u8>,
     }
 
+    struct ShareTransferred has copy, drop {
+        share_id: address,
+        from: address,
+        to: address,
+        difficulty: u64,
+        fee_amount: u64,
+        timestamp: u64,
+    }
+
+    struct ShareRedeemed has copy, drop {
+        share_id: address,
+        height: u32,
+        owner: address,
+        difficulty: u64,
+        pps_reward: u64,
+        timestamp: u64,
+    }
+
+    struct RewardPoolCreated has copy, drop {
+        pool_id: address,
+        height: u32,
+        block_hash: vector<u8>,
+        coinbase_value: u64,
+        timestamp: u64,
+    }
+
     /// Initialize mining registry
     fun init(ctx: &mut TxContext) {
         let registry = MiningRegistry {
             id: object::new(ctx),
             active_templates: table::new(ctx),
             submitted_shares: table::new(ctx),
+            reward_pools: table::new(ctx),
             total_templates: 0,
             total_shares: 0,
             total_valid_shares: 0,
             total_blocks_found: 0,
+            total_shares_traded: 0,
+            total_fees_collected: 0,
             mining_mode_active: false,
         };
         transfer::share_object(registry);
@@ -285,10 +351,12 @@ module p2pool_shares::m1n3_mining {
             nonce,
             extra_nonce,
             miner: sender,
+            owner: sender,
             difficulty: bits_to_difficulty(template.bits),
             submitted_at: current_time,
             is_valid: is_valid && meets_pool_difficulty,
             found_block,
+            redeemed: false,
         };
 
         let share_addr = object::uid_to_address(&share.id);
@@ -327,6 +395,25 @@ module p2pool_shares::m1n3_mining {
         if (found_block) {
             registry.total_blocks_found = registry.total_blocks_found + 1;
 
+            // Create block reward pool for PPS redemption
+            let reward_pool = BlockRewardPool {
+                id: object::new(ctx),
+                height: template.height,
+                block_hash: header_hash,
+                coinbase_value: template.coinbase_value,
+                total_difficulty: 0,
+                total_shares: 0,
+                found_at: current_time,
+                redemption_enabled: false,
+                redeemed_shares: 0,
+            };
+
+            let pool_id = object::uid_to_inner(&reward_pool.id);
+            let pool_addr = object::uid_to_address(&reward_pool.id);
+
+            // Register reward pool
+            table::add(&mut registry.reward_pools, template.height, pool_id);
+
             event::emit(BlockFound {
                 height: template.height,
                 header_hash,
@@ -334,6 +421,16 @@ module p2pool_shares::m1n3_mining {
                 template_proposer: template.proposer,
                 timestamp: current_time,
             });
+
+            event::emit(RewardPoolCreated {
+                pool_id: pool_addr,
+                height: template.height,
+                block_hash: header_hash,
+                coinbase_value: template.coinbase_value,
+                timestamp: current_time,
+            });
+
+            transfer::share_object(reward_pool);
         };
 
         // Emit event
@@ -346,14 +443,185 @@ module p2pool_shares::m1n3_mining {
             found_block,
         });
 
-        // Share or transfer share
-        if (found_block) {
-            // Block winner shares are special - make them tradeable NFTs
-            transfer::transfer(share, sender);
-        } else {
-            // Regular shares just recorded
-            transfer::share_object(share);
+        // All valid shares are tradeable NFTs owned by miner
+        transfer::transfer(share, sender);
+    }
+
+    /// Transfer share with 2% fee to M1N3 stakers
+    public entry fun transfer_share(
+        registry: &mut MiningRegistry,
+        staking_registry: &StakingRegistry,
+        share: MiningShare,
+        recipient: address,
+        payment: Coin<M1N3>,
+        clock: &Clock,
+        ctx: &mut TxContext
+    ) {
+        let sender = tx_context::sender(ctx);
+
+        // Verify sender owns the share
+        assert!(share.owner == sender, E_INVALID_SHARE_OWNERSHIP);
+
+        // Calculate 2% transfer fee on the payment amount
+        let payment_amount = coin::value(&payment);
+        let fee_amount = (payment_amount * SHARE_TRANSFER_FEE_PERCENT) / 100;
+        let seller_amount = payment_amount - fee_amount;
+
+        // Split payment
+        let fee_coin = coin::split(&mut payment, fee_amount, ctx);
+
+        // Distribute fee to all M1N3 stakers
+        m1n3_staking::distribute_fee_to_stakers(staking_registry, fee_coin);
+
+        // Transfer remaining payment to seller
+        transfer::public_transfer(payment, sender);
+
+        // Update share ownership
+        let share_id = object::uid_to_address(&share.id);
+        let MiningShare {
+            id,
+            share_hash,
+            header_hash,
+            template_id,
+            height,
+            nonce,
+            extra_nonce,
+            miner,
+            owner: _,
+            difficulty,
+            submitted_at,
+            is_valid,
+            found_block,
+            redeemed,
+        } = share;
+
+        let updated_share = MiningShare {
+            id,
+            share_hash,
+            header_hash,
+            template_id,
+            height,
+            nonce,
+            extra_nonce,
+            miner,
+            owner: recipient,
+            difficulty,
+            submitted_at,
+            is_valid,
+            found_block,
+            redeemed,
         };
+
+        // Update registry stats
+        registry.total_shares_traded = registry.total_shares_traded + 1;
+        registry.total_fees_collected = registry.total_fees_collected + fee_amount;
+
+        // Emit event
+        event::emit(ShareTransferred {
+            share_id,
+            from: sender,
+            to: recipient,
+            difficulty,
+            fee_amount,
+            timestamp: clock::timestamp_ms(clock),
+        });
+
+        // Transfer share to recipient
+        transfer::transfer(updated_share, recipient);
+    }
+
+    /// Enable redemptions for a found block
+    public entry fun enable_redemptions(
+        pool: &mut BlockRewardPool,
+        _ctx: &mut TxContext
+    ) {
+        pool.redemption_enabled = true;
+    }
+
+    /// Register share for PPS calculation (must be called before redemption)
+    public entry fun register_share_for_redemption(
+        pool: &mut BlockRewardPool,
+        share: &MiningShare,
+        _ctx: &mut TxContext
+    ) {
+        // Verify share is for this block height
+        assert!(share.height == pool.height, E_BLOCK_NOT_FOUND);
+        assert!(share.is_valid, E_INVALID_SHARE);
+
+        // Add share difficulty to pool
+        pool.total_difficulty = pool.total_difficulty + share.difficulty;
+        pool.total_shares = pool.total_shares + 1;
+    }
+
+    /// Redeem share for Bitcoin rewards (PPS - Pay Per Share)
+    public entry fun redeem_share(
+        pool: &mut BlockRewardPool,
+        share: MiningShare,
+        treasury: &mut M1N3Treasury,
+        clock: &Clock,
+        ctx: &mut TxContext
+    ) {
+        let sender = tx_context::sender(ctx);
+
+        // Verify ownership
+        assert!(share.owner == sender, E_INVALID_SHARE_OWNERSHIP);
+
+        // Verify share is for this block
+        assert!(share.height == pool.height, E_BLOCK_NOT_FOUND);
+
+        // Verify redemptions are enabled
+        assert!(pool.redemption_enabled, E_REDEMPTION_NOT_ALLOWED);
+
+        // Verify share is valid and not already redeemed
+        assert!(share.is_valid, E_INVALID_SHARE);
+        assert!(!share.redeemed, E_REDEMPTION_NOT_ALLOWED);
+
+        // Calculate PPS reward
+        // Reward = (share_difficulty / total_difficulty) * coinbase_value
+        // Convert to M1N3 tokens (multiply by 1000 as per M1N3 economics)
+        let share_portion = (share.difficulty * 1000000) / pool.total_difficulty; // Use fixed point math
+        let pps_reward = (pool.coinbase_value * share_portion) / 1000; // M1N3 tokens with 8 decimals
+
+        // Mint M1N3 tokens as redemption reward
+        let reward_coin = m1n3_token::mint_reward(treasury, pps_reward, ctx);
+
+        // Update pool stats
+        pool.redeemed_shares = pool.redeemed_shares + 1;
+
+        let share_id = object::uid_to_address(&share.id);
+
+        // Emit redemption event
+        event::emit(ShareRedeemed {
+            share_id,
+            height: share.height,
+            owner: sender,
+            difficulty: share.difficulty,
+            pps_reward,
+            timestamp: clock::timestamp_ms(clock),
+        });
+
+        // Destroy redeemed share
+        let MiningShare {
+            id,
+            share_hash: _,
+            header_hash: _,
+            template_id: _,
+            height: _,
+            nonce: _,
+            extra_nonce: _,
+            miner: _,
+            owner: _,
+            difficulty: _,
+            submitted_at: _,
+            is_valid: _,
+            found_block: _,
+            redeemed: _,
+        } = share;
+
+        object::delete(id);
+
+        // Transfer redemption reward
+        transfer::public_transfer(reward_coin, sender);
     }
 
     /// Helper: Construct template data for hashing
