@@ -1,14 +1,14 @@
-# M1N3 - Decentralized Trustless Bitcoin Mining & Verification
+# m1n3 - Decentralized Trustless Bitcoin Mining & Verification
 
-M1N3 is a next-generation decentralized Bitcoin mining protocol based on P2Pool, featuring on-chain verification via Sui blockchain and a revolutionary share trading economy.
+m1n3 is a next-generation decentralized Bitcoin mining protocol based on P2Pool, featuring on-chain verification via Sui blockchain and a revolutionary share trading economy.
 
 ## Overview
 
-M1N3 combines traditional P2Pool mining with blockchain verification and creates a tradeable share marketplace where miners can instantly monetize their work before blocks are found.
+m1n3 combines traditional P2Pool mining with blockchain verification and creates a tradeable share marketplace where miners can instantly monetize their work before blocks are found.
 
-### Built on P2Pool v2 Architecture
+### Built on P2Pool Architecture
 
-M1N3 extends the modern [P2Pool v2](https://github.com/p2poolv2/p2poolv2) design with on-chain verification capabilities:
+m1n3 extends P2Pool V2 (https://github.com/p2poolv2/p2poolv2) design with on-chain verification capabilities:
 
 **P2Pool Foundations:**
 - **Sharechain with Uncle Blocks** - Inspired by P2Pool v2's uncle block support for comprehensive work accounting
@@ -17,7 +17,7 @@ M1N3 extends the modern [P2Pool v2](https://github.com/p2poolv2/p2poolv2) design
 - **Stratum v2 Compatibility** - Ready for modern mining protocols with improved efficiency
 - **Rust-Bitcoin Standards** - Aligned with modern Bitcoin protocol implementations
 
-**M1N3 Enhancements:**
+**m1n3 Enhancements:**
 - **Sui Blockchain Verification** - Adds trustless on-chain SHA-256 verification layer
 - **Tradeable Share NFTs** - Every valid share becomes a liquid financial instrument
 - **Two-Phase Bootstrap** - Historical verification distributes initial token supply fairly
@@ -42,13 +42,6 @@ M1N3 extends the modern [P2Pool v2](https://github.com/p2poolv2/p2poolv2) design
 - pysui >= 0.50.0
 - **IKA SDK** (optional, for PPLNS mode with dWallet integration)
 
-### Bitcoin Protocol Compatibility
-M1N3 builds upon modern P2Pool v2 architecture and requires:
-- **Taproot Support** (activated block 709,632 - Nov 2021)
-- **SegWit** native address support
-- **Witness Transaction Serialization** (BIP 141)
-- **getblocktemplate** with `segwit` and `taproot` rules
-- **Compact Blocks** (BIP 152) for efficient propagation
 
 ### Linux
 ```bash
@@ -68,14 +61,14 @@ npm install @dwallet-labs/ika
 
 ## Bitcoin Full Node Requirement
 
-**CRITICAL: M1N3 requires a fully synced Bitcoin Core node running locally.**
+**CRITICAL: m1n3 requires a fully synced Bitcoin node running locally.**
 
 ### Why Full Node is Required
 
-M1N3's entire architecture depends on accessing complete Bitcoin blockchain data:
+m1n3's entire architecture depends on accessing complete Bitcoin blockchain data:
 
 1. **Phase 1 - Historical Verification**:
-   - Retrieves all historical block headers from Bitcoin Core
+   - Retrieves all historical block headers from Bitcoin nodes
    - Fetches complete block data (version, prev_hash, merkle_root, timestamp, bits, nonce)
    - Reads coinbase transaction values for reward calculation
    - Requires complete blockchain history from genesis to current height
